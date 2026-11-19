@@ -1,0 +1,9 @@
+{
+  "name": "dinner",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "test": "node test/logic.test.js && node test/ui-test.js && node test/layout-test.js",
+    "serve": "node test/server.js"
+  }
+}
