@@ -1,5 +1,6 @@
 // 今晚吃啥 — the whole user interface. Screens are plain template strings rendered into #view on hash change.
 import * as DB from './db.js';
+import * as Sync from './sync.js';
 import { DISHES, EXTRAS, CUISINES, TYPES, LEVELS, TASTES, FRIDGE, FOOD_EMOJI } from './dishes.js';
 import { STORES, STORE_ORDER, whereToBuy, storeOf } from './shops.js';
 import {
@@ -11,7 +12,7 @@ import {
   searchQ, xhsApp, xhsWeb, xcfWeb, ytWeb, parseShared, stars,
 } from './logic.js';
 
-export const VERSION = '1.3.0';
+export const VERSION = '1.4.0';
 const $ = (s, r = document) => r.querySelector(s);
 const $$ = (s, r = document) => [...r.querySelectorAll(s)];
 const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
@@ -23,7 +24,7 @@ const STANDALONE = matchMedia('(display-mode: standalone)').matches || navigator
 
 const DEFAULTS = {
   avoidDays: 5, withPantry: false, hideInstall: false, filter: DEFAULT_FILTER,
-  learn: true, city: '', perDay: 2, autoPlan: false, autoPlanned: '', newWeek: null, extraNo: [],
+  learn: true, city: '', perDay: 2, autoPlan: false, autoPlanned: '', newWeek: null, extraNo: [], name: '',
 };
 const RATE_TXT = ['点星星打个分', '不太行 😣', '一般般 😐', '还不错 🙂', '好吃 😋', '超好吃！🤩'];
 const QUICK = ['下次多放盐', '少放点盐', '少放油', '更辣一点', '火候小一点', '多煮一会', '酱汁多一点', '家人很喜欢', '可以常做'];
@@ -402,7 +403,7 @@ function logRow(l, inDish) {
   return `<div class="lrow card" data-act="log-edit" data-id="${l.id}" role="button" tabindex="0">
     ${inDish ? '' : plate(d, 'sm', !!l.photo)}
     <div class="grow"><div class="lt"><b>${inDish ? fmtDate(l.date) : esc(d.name)}</b>${l.rating ? `<span class="stars">${stars(l.rating)}</span>` : ''}</div>
-    <div class="muted sm">${inDish ? relDays(l.date, today()) : `${fmtDate(l.date)} · ${relDays(l.date, today())}`}</div>
+    <div class="muted sm">${inDish ? relDays(l.date, today()) : `${fmtDate(l.date)} · ${relDays(l.date, today())}`}${l.by ? ` · 👤 ${esc(l.by)}` : ''}</div>
     ${l.note ? `<p class="lnote">📝 ${esc(l.note)}</p>` : ''}</div>
     ${l.photo ? `<img class="lph" src="${l.photo}" alt="">` : ''}
   </div>`;
@@ -632,6 +633,16 @@ function Me() {
     <label class="srow"><span class="grow">「帮我排」每天排<small>两道菜 = 一荤一素，冷天是荤素一锅 + 汤</small></span><select class="sel" data-set="perDay"><option value="2" ${perDay() === 2 ? 'selected' : ''}>两道菜</option><option value="1" ${perDay() === 1 ? 'selected' : ''}>一道菜</option></select></label>
     <label class="srow"><span class="grow">🔄 每周自动排菜单<small>每周一打开时，自动把空的日子排好</small></span><input type="checkbox" class="switch" data-set="autoPlan" ${s.autoPlan ? 'checked' : ''}></label>
   </section>
+  <section class="card" id="sync"><h3>👫 两人同步</h3>
+    ${Sync.status.on ? `<p class="muted sm">两台手机用同一个同步码：菜谱、做菜记录、菜单和购物清单会自动同步。App 打开时每几秒更新一次。</p>
+      <div class="codebox"><span>同步码</span><b>${esc(Sync.code())}</b><button class="btn soft sm" data-act="sync-share">发给对方</button></div>
+      <p class="sync-st" id="syncst">${esc(syncLine())}</p>
+      <div class="btns two"><button class="btn soft" data-act="sync-now">🔄 立即同步</button><button class="btn ghost" data-act="sync-leave">停止同步</button></div>`
+    : `<p class="muted sm">两个人一起用：一人记录、排菜单或加购物清单，另一人的 App 也会自动更新。</p>
+      <div class="btns two"><button class="btn primary" data-act="sync-create">开启同步</button><button class="btn soft" data-act="sync-join">我有同步码</button></div>
+      <p class="muted xs">第一台手机点「开启同步」，把同步码发给对方；对方点「我有同步码」输入。两人原有的资料会合在一起。资料存在你自己的 Google Drive（不公开）。</p>`}
+    <label class="srow"><span class="grow">我的名字<small>记录里会写是谁做的</small></span><input type="text" class="sel name-in" data-set="name" maxlength="8" placeholder="比如 YC" value="${esc(s.name || '')}"></label>
+  </section>
   <section class="card"><h3>💾 资料</h3><p class="muted sm">所有资料只存在这台手机上。换手机或清除 Safari 资料前，记得先导出备份。</p>
     <div class="btns"><button class="btn soft" data-act="export">📤 导出备份</button><button class="btn soft" data-act="import">📥 导入备份</button></div>
     <div class="btns"><button class="btn ghost danger-t" data-act="wipe">🗑 清空所有资料</button></div>
@@ -720,7 +731,7 @@ function logSheet(dishId, logId, date) {
     if (e.target.closest('[data-save]')) {
       const dateV = $('[name=date]', sh.el).value || today();
       if (dateV > today()) { toast('还没到那天哦'); return; }
-      const log = { id: old ? old.id : uid(), dishId: old ? old.dishId : dishId, date: dateV, rating: st.rating, note: ta.value.trim(), photo: st.photo, createdAt: old ? old.createdAt : Date.now() };
+      const log = { id: old ? old.id : uid(), dishId: old ? old.dishId : dishId, date: dateV, rating: st.rating, note: ta.value.trim(), photo: st.photo, createdAt: old ? old.createdAt : Date.now(), by: old ? old.by || '' : S.settings.name || '' };
       await DB.put('logs', log);
       if (d.pending) await saveRec(d.id, { added: true, addedAt: Date.now() }); // cooked a suggested dish → it joins the library
       S.logs = [...S.logs.filter((l) => l.id !== log.id), log];
@@ -1081,6 +1092,32 @@ const ACTS = {
     });
   },
   'logs-all': () => { S.ui.allLogs = true; render(); },
+  async 'sync-create'() {
+    if (!(await ask('开启两人同步？', '会生成一个同步码，这台手机的资料会上传。把同步码发给对方，对方输入后就会一起同步。', '开启'))) return;
+    toast('正在开启…');
+    try { await Sync.create(); } catch (e) { toast('开启失败：' + e.message); return; }
+    render();
+    showCode();
+  },
+  'sync-join': () => {
+    const sh = sheet('输入同步码', `<p class="muted sm">在对方的 App「设置 → 两人同步」里能看到同步码。</p>
+      <label class="field"><span>同步码</span><input name="code" placeholder="ABCD-EFGH-JKLM" autocapitalize="characters" autocomplete="off" spellcheck="false" maxlength="20"></label>
+      <p class="muted xs">你这台手机原有的资料会和对方的合在一起。</p>`, { foot: '<button class="btn ghost" data-close>取消</button><button class="btn primary grow" data-join>加入</button>' });
+    const inp = $('[name=code]', sh.el);
+    inp.addEventListener('input', () => { const f = Sync.fmtCode(inp.value).slice(0, 14); if (f !== inp.value) inp.value = f; });
+    $('[data-join]', sh.el).onclick = async () => {
+      if (Sync.cleanCode(inp.value).length !== 12) { toast('同步码是 12 位'); return; }
+      toast('正在连接…');
+      try { await Sync.join(inp.value); } catch (e) { toast(e.message); return; }
+      sh.close(); await load(); render(); toast('已加入同步 ✓');
+    };
+  },
+  'sync-share': () => showCode(),
+  'sync-now': () => { Sync.syncNow(); },
+  async 'sync-leave'() {
+    if (!(await ask('停止同步？', '这台手机不再和对方同步，资料会留在这台手机上。以后可以重新输入同步码加入。', '停止同步', true))) return;
+    await Sync.leave(); render(); toast('已停止同步');
+  },
   async 'install-hide'() { S.settings.hideInstall = true; await saveSettings(); render(); },
   async export() {
     const data = await DB.dump();
@@ -1111,12 +1148,49 @@ const ACTS = {
     await load(); render(); toast('导入好了 ✓');
   },
   async wipe() {
-    if (!(await ask('清空所有资料？', '记录、菜单、购物清单、自己加的菜和收藏都会删掉，没法恢复。建议先导出备份。', '全部清空', true))) return;
+    if (!(await ask('清空所有资料？', Sync.status.on ? '只清空这台手机，并停止同步；另一台手机和同步里的资料不受影响。之后重新输入同步码就能拿回来。' : '记录、菜单、购物清单、自己加的菜和收藏都会删掉，没法恢复。建议先导出备份。', '全部清空', true))) return;
+    if (Sync.status.on) await Sync.leave();
     await DB.wipe();
     S.ui.result = null; S.ui.combo = null;
     await load(); location.hash = '#home'; render(); toast('已清空');
   },
 };
+
+// ---------- 两人同步 ----------
+function syncLine() {
+  const s = Sync.status;
+  if (s.error) return '⚠️ ' + s.error;
+  if (s.syncing) return '🔄 同步中…';
+  if (!s.lastOk) return '等待同步…';
+  const sec = Math.round((Date.now() - s.lastOk) / 1000);
+  return `✅ 已同步 · ${sec < 10 ? '刚刚' : sec < 60 ? `${sec} 秒前` : `${Math.round(sec / 60)} 分钟前`}`;
+}
+function showCode() {
+  const c = Sync.code();
+  const text = `一起用「今晚吃啥」吧！打开 ${location.origin}${location.pathname} → 设置 → 两人同步 → 我有同步码，输入：${c}`;
+  const sh = sheet('同步码', `<div class="bigcode">${esc(c)}</div><p class="muted sm center">让对方在「设置 → 两人同步 → 我有同步码」输入这串字。<br>只给自己人：有同步码就能看到和修改你们的资料。</p>`,
+    { cls: 'small', foot: '<button class="btn soft grow" data-copy>📋 复制</button><button class="btn primary grow" data-share>📤 发给对方</button>' });
+  $('[data-copy]', sh.el).onclick = async () => { try { await navigator.clipboard.writeText(c); toast('已复制'); } catch (e) { toast('长按同步码可以复制'); } };
+  $('[data-share]', sh.el).onclick = async () => {
+    if (navigator.share) { try { await navigator.share({ text }); } catch (e) { /* cancelled */ } return; }
+    try { await navigator.clipboard.writeText(text); toast('已复制，去微信 / WhatsApp 粘贴给对方'); } catch (e) { toast('长按同步码可以复制'); }
+  };
+}
+// The other phone changed something: reload and redraw, unless the user is in the middle of something.
+async function remoteChanged() {
+  await load();
+  safeRender();
+}
+function safeRender() {
+  clearTimeout(safeRender.t);
+  const busy = $('.sheet-wrap') || S.ui.spinning || (document.activeElement && document.activeElement.matches('input,textarea,select'));
+  if (busy) { safeRender.t = setTimeout(safeRender, 1500); return; }
+  render();
+}
+function syncStatusShown() {
+  const el = $('#syncst');
+  if (el) el.textContent = syncLine();
+}
 
 // ---------- routing ----------
 const SCREENS = { home: Home, dishes: Dishes, dish: DishPage, plan: Plan, log: LogPage, me: Me };
@@ -1187,6 +1261,8 @@ async function start() {
   try { await load(); } catch (e) { $('#view').innerHTML = `<div class="empty">无法打开本地资料库：${esc(e.message)}<br>如果在无痕模式，请换普通模式打开。</div>`; return; }
   render();
   loadWeather().then(maybeAutoPlan).catch(() => {});
+  Sync.init({ onChange: remoteChanged, onStatus: syncStatusShown }).catch((e) => console.warn(e));
+  setInterval(syncStatusShown, 10000);
   if (navigator.storage && navigator.storage.persist) navigator.storage.persist().catch(() => {});
   if ('serviceWorker' in navigator && location.protocol !== 'file:') {
     navigator.serviceWorker.register('sw.js', { updateViaCache: 'none' }).then(() => checkUpdate()).catch(() => {});
@@ -1195,7 +1271,7 @@ async function start() {
       reloadWhenIdle();
     });
   }
-  window.__dinner = { S, render, DB, reload: async () => { await load(); render(); }, maybeAutoPlan, coldOn }; // for tests
+  window.__dinner = { S, render, DB, Sync, reload: async () => { await load(); render(); }, maybeAutoPlan, coldOn }; // for tests
   document.documentElement.dataset.ready = '1';
 }
 

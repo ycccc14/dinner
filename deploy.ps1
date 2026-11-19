@@ -14,8 +14,19 @@ node test/ui-test.js
 if ($LASTEXITCODE -ne 0) { throw 'UI test failed - nothing was published.' }
 node test/layout-test.js
 if ($LASTEXITCODE -ne 0) { throw 'Layout test failed - nothing was published.' }
+node test/sync-server.test.js
+if ($LASTEXITCODE -ne 0) { throw 'Sync server tests failed - nothing was published.' }
+node test/sync-test.js
+if ($LASTEXITCODE -ne 0) { throw 'Two-phone sync test failed - nothing was published.' }
 
-$ErrorActionPreference = 'Continue' # git writes harmless warnings to stderr; check exit codes instead
+$ErrorActionPreference = 'Continue' # git and clasp write harmless warnings to stderr; check exit codes instead
+# Sync server (server/, Google Apps Script "jinwan sync"): update the code and the existing web-app deployment (same URL).
+$env:Path = "$env:APPDATA\npm;$env:Path"
+clasp push --force
+if ($LASTEXITCODE -ne 0) { throw 'Pushing the sync server code failed.' }
+clasp update-deployment AKfycbxPsKQwN_PYYhSI4smXEy9uk1tEl0i0kXmUiHOhpT9yNX7KLPWH_UYGiDgBvXJPHBhUfg --description $Description
+if ($LASTEXITCODE -ne 0) { throw 'Updating the sync server deployment failed.' }
+
 $first = -not (Test-Path (Join-Path $PSScriptRoot '.git'))
 if ($first) {
   git init -q -b main

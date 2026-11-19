@@ -388,3 +388,11 @@ p { margin: 6px 0; }
 .mix i.light { background: var(--green); } .mix i.normal { background: var(--brand-2); } .mix i.heavy { background: var(--red); }
 .legend { font-size: 12px; color: var(--muted); margin: 6px 0 0; }
 .learn { margin: 0; font-size: 14px; line-height: 1.7; }
+
+/* ---- v1.4: 两人同步 ---- */
+.codebox { display: flex; align-items: center; gap: 10px; background: var(--soft); border-radius: 14px; padding: 10px 12px; margin: 8px 0; }
+.codebox span { font-size: 12px; color: var(--muted); flex: none; }
+.codebox b { flex: 1; min-width: 0; font-size: 17px; letter-spacing: 1px; color: var(--on-soft); font-family: ui-monospace, Menlo, monospace; overflow-wrap: anywhere; }
+.sync-st { font-size: 13px; margin: 6px 2px; }
+.bigcode { text-align: center; font-size: 26px; font-weight: 800; letter-spacing: 2px; font-family: ui-monospace, Menlo, monospace; color: var(--brand); background: var(--soft); border-radius: 16px; padding: 16px 8px; margin: 6px 0 10px; user-select: all; -webkit-user-select: all; overflow-wrap: anywhere; }
+.name-in { width: 108px; }
