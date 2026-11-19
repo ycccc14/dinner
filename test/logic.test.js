@@ -169,6 +169,30 @@ test('不用蒜: only dishes that live on garlic are left out', () => {
   assert.equal(L.activeFilters(f), 1, 'counts as a filter');
 });
 
+test('海鲜: none by default; 可以有 / 只要 海鲜', () => {
+  const byId = (id) => ds.find((d) => d.id === id);
+  for (const id of ['poached-prawns', 'steamed-fish', 'salmon', 'lala', 'tomato-basa', 'broccoli-shrimp', 'fish-slice-soup', 'char-kway-teow']) assert.equal(L.seafoodOf(byId(id)), 'main', id);
+  for (const id of ['seaweed-soup', 'wintermelon-shrimp', 'kangkung']) assert.notEqual(L.seafoodOf(byId(id)), 'none', id);
+  assert.equal(L.seafoodOf(byId('seaweed-soup')), 'minor', 'a few dried shrimp only');
+  assert.equal(L.seafoodOf(byId('wintermelon-shrimp')), 'main', 'shrimp in the name');
+  for (const id of ['tomato-egg', 'cola-wings', 'miso-soup', 'jp-curry']) assert.equal(L.seafoodOf(byId(id)), 'none', id);
+  const daily = ds.filter((d) => L.matchesFilter(d, L.DEFAULT_FILTER));
+  assert.ok(daily.every((d) => L.seafoodOf(d) !== 'main'), 'no seafood by default');
+  assert.equal(L.activeFilters(L.DEFAULT_FILTER), 0);
+  const only = ds.filter((d) => L.matchesFilter(d, { ...L.DEFAULT_FILTER, seafood: 'only' }));
+  assert.ok(only.length >= 6 && only.every((d) => L.seafoodOf(d) === 'main'));
+  assert.ok(ds.filter((d) => L.matchesFilter(d, { ...L.DEFAULT_FILTER, seafood: 'ok' })).length > daily.length);
+  assert.equal(L.activeFilters({ ...L.DEFAULT_FILTER, seafood: 'ok' }), 1);
+  const rng = L.seeded(21);
+  for (let i = 0; i < 50; i++) {
+    const c = L.pickCombo(ds, { ...base, rng, filter: { ...L.DEFAULT_FILTER, seafood: 'only' } });
+    assert.equal(L.seafoodOf(ds.find((d) => d.id === c.slots.meat)), 'main', 'seafood main dish');
+    assert.ok(c.slots.veg, 'the vegetable dish still works');
+    const s = L.pickCombo(ds, { ...base, rng, combo: 'soup', filter: L.DEFAULT_FILTER });
+    assert.ok(L.comboIds(s).length === 2 && L.comboIds(s).every((id) => L.seafoodOf(ds.find((d) => d.id === id)) !== 'main'), 'cold-day combo without seafood');
+  }
+});
+
 test('where to buy: every ingredient has a store; 不用跑亚洲超市 filter', () => {
   for (const d of [...DISHES, ...EXTRAS]) for (const i of d.ings) assert.ok(whereToBuy(i), 'no store for ' + i);
   for (const p of PANTRY) assert.ok(whereToBuy(p), 'no store for ' + p);

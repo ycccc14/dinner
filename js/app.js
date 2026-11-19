@@ -5,13 +5,13 @@ import { STORES, STORE_ORDER, whereToBuy, storeOf } from './shops.js';
 import {
   today, parseDate, addDays, weekStart, weekday, fmtDate, relDays, greeting, monthGrid, addMonths,
   mergeDishes, pendingExtras, splitIngs, isPantry, dishStats, matchesFilter, activeFilters, DEFAULT_FILTER, pickOne,
-  SLOTS, COMBOS, slotFilter, pickCombo, comboIds, garlicOf, asianIngs,
+  SLOTS, COMBOS, slotFilter, pickCombo, comboIds, garlicOf, asianIngs, seafoodOf, matchesSeafood,
   fridgeMatches, pickFridge, weekDates, fillWeek, shoppingFrom, mergeShop, streak,
   learnPrefs, tasteSummary, analyze, missYou, weeklyNew, CITIES, COLD_AT, isCold, weatherUrl, eveningTemps,
   searchQ, xhsApp, xhsWeb, xcfWeb, ytWeb, parseShared, stars,
 } from './logic.js';
 
-export const VERSION = '1.2.0';
+export const VERSION = '1.3.0';
 const $ = (s, r = document) => r.querySelector(s);
 const $$ = (s, r = document) => [...r.querySelectorAll(s)];
 const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
@@ -129,7 +129,8 @@ function weekNew() {
   const ws = weekStart(today());
   let nw = S.settings.newWeek;
   if (!nw || nw.week !== ws) {
-    nw = { week: ws, ids: weeklyNew(S.pending, { week: ws, prefs: S.prefs, dismissed: S.settings.extraNo, n: 3 }) };
+    const pool = S.pending.filter((d) => matchesSeafood(d, S.settings.filter.seafood === 'only' ? 'ok' : S.settings.filter.seafood));
+    nw = { week: ws, ids: weeklyNew(pool, { week: ws, prefs: S.prefs, dismissed: S.settings.extraNo, n: 3 }) };
     S.settings.newWeek = nw;
     saveSettings();
   }
@@ -310,6 +311,7 @@ const myLinkBtn = (d) => (d.links.length ? `<a class="btn mine block" href="${es
 function needHints(d) {
   const h = [];
   if (S.settings.filter.noGarlic && garlicOf(d) === 'opt') h.push('🧄 不放蒜也可以，多放点姜和葱');
+  if (S.settings.filter.seafood === 'no' && seafoodOf(d) === 'minor') h.push('🦐 只用一点虾米 / 江鱼仔提味，不放也行');
   const a = asianIngs(d);
   if (a.length) h.push(`🏮 要去亚洲超市买：${a.map(esc).join('、')}`);
   return h.map((x) => `<p class="hint">${x}</p>`).join('');
@@ -346,11 +348,13 @@ function comboCard(c) {
     <div class="btns two"><button class="btn primary" data-act="choose-combo">👍 就这些</button><button class="btn soft" data-act="shop-dishes" data-ids="${ids.join(',')}">🛒 买食材</button></div></div>`;
 }
 
+// Picked 虾 or 鱼 in the fridge → seafood is clearly fine this time.
+const fridgeFilter = () => (S.ui.fridge.some((g) => g === '虾' || g === '鱼') && S.settings.filter.seafood === 'no' ? { ...S.settings.filter, seafood: 'ok' } : S.settings.filter);
 function fridgeStage() {
   const ui = S.ui;
   const chips = `<div class="fchips">${FRIDGE.map(([g, e]) => `<button class="fchip ${ui.fridge.includes(g) ? 'on' : ''}" data-act="fridge" data-v="${g}"><span>${e}</span>${g}</button>`).join('')}</div>`;
   if (!ui.fridge.length) return `<p class="lead">家里有什么？点一下选上（可以多选）</p>${chips}${emptyPlate('🧊', '选好食材，看看今晚能做什么')}`;
-  const ms = fridgeMatches(S.dishes, ui.fridge, { filter: S.settings.filter });
+  const ms = fridgeMatches(S.dishes, ui.fridge, { filter: fridgeFilter() });
   const pick = ui.fridgePick && ms.find((m) => m.dish.id === ui.fridgePick);
   const fx = (m) => `<div class="fx"><span class="ok">✓ 用到 ${m.hit.map(esc).join('、')}</span>${m.missing.length ? `<span class="need">还要买：${m.missing.map(esc).join('、')}</span>` : '<span class="ok">食材都齐了 🎉</span>'}</div>`;
   return `<p class="lead">家里有什么？点一下选上（可以多选）<button class="link" data-act="fridge-clear">清空</button></p>${chips}
@@ -387,6 +391,8 @@ function filterSummary(f) {
   if (f.taste === 'all') p.push('口味不限');
   if (f.noGarlic) p.push('不用蒜');
   if (f.easyShop) p.push('不跑亚洲超市');
+  if (f.seafood === 'ok') p.push('可以有海鲜');
+  if (f.seafood === 'only') p.push('只要海鲜');
   if (f.favOnly) p.push('只挑收藏');
   return p.join(' · ');
 }
@@ -644,6 +650,7 @@ function filterSheet() {
     return `<h4>菜系</h4><div class="chips">${opt('cuisine', 'all', '全部')}${Object.entries(CUISINES).map(([k, c]) => opt('cuisine', k, `${c.emoji} ${c.name}`)).join('')}</div>
     <h4>类型 ${S.ui.mode === 'combo' ? '<small>两道菜模式不看这一项</small>' : ''}</h4><div class="chips">${opt('type', 'all', '全部')}${Object.entries(TYPES).map(([k, t]) => opt('type', k, `${t.emoji} ${t.name}`)).join('')}</div>
     <h4>口味 ${heavyCombo}</h4><div class="chips">${[['daily', '🍚 日常（不油炸不重口）'], ['light', '🥗 少油少盐'], ['heavy', '🔥 油炸重口'], ['all', '口味不限']].map(([v, l]) => opt('taste', v, l)).join('')}</div>
+    <h4>海鲜</h4><div class="chips">${[['no', '🚫 不要海鲜'], ['ok', '🦐 可以有海鲜'], ['only', '🐟 只要海鲜']].map(([v, l]) => opt('seafood', v, l)).join('')}</div>
     <h4>时间</h4><div class="chips">${[[0, '不限'], [15, '15 分钟内'], [30, '30 分钟内'], [60, '1 小时内']].map(([v, l]) => opt('maxTime', v, l)).join('')}</div>
     <h4>难度</h4><div class="chips">${[[1, '🔰 新手友好'], [2, '别太难'], [0, '不限']].map(([v, l]) => opt('level', v, l)).join('')}</div>
     <h4>其他</h4><div class="chips">${[['noGarlic', '🧄 不用蒜也能做'], ['easyShop', '🛒 不用跑亚洲超市'], ['favOnly', '❤️ 只从收藏里挑']].map(([k, l]) => `<button type="button" class="chip ${f[k] ? 'on' : ''}" data-k="${k}" data-v="toggle">${l}</button>`).join('')}</div>
@@ -995,7 +1002,7 @@ const ACTS = {
   'fridge-clear': () => { S.ui.fridge = []; S.ui.fridgePick = null; render(); },
   async 'fridge-pick'() {
     if (S.ui.spinning) return;
-    const ms = fridgeMatches(S.dishes, S.ui.fridge, { filter: S.settings.filter });
+    const ms = fridgeMatches(S.dishes, S.ui.fridge, { filter: fridgeFilter() });
     if (S.ui.fridgePick) S.ui.skip.push(S.ui.fridgePick);
     let d = pickFridge(ms, pickOpts());
     if (!d && S.ui.skip.length) { S.ui.skip = []; d = pickFridge(ms, pickOpts()); }

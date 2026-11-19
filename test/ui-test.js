@@ -249,6 +249,28 @@ try {
   await until('!window.__dinner.S.settings.filter.noGarlic && !window.__dinner.S.settings.filter.easyShop', 'reset');
   ok('筛选: 🧄 不用蒜也能做 + 🛒 不用跑亚洲超市 are respected and counted');
 
+  // 8d. 海鲜: none by default, 只要海鲜 on request
+  for (let i = 0; i < 6; i++) {
+    await tap('[data-act=spin]');
+    await until('!window.__dinner.S.ui.spinning && document.querySelector(".result")', 'pick');
+    const d = await S('S.dishes.find((x) => x.id === S.ui.result)');
+    assert.ok(!/虾|鱼|啦啦/.test(d.name), d.name + ' is seafood');
+  }
+  await tap('[data-act=filters]');
+  await until('document.querySelector(".fcount")', 'filter sheet');
+  assert.ok(await js('[...document.querySelectorAll(".sheet .chip.on")].some((c) => c.textContent.includes("不要海鲜"))'), '不要海鲜 is the default');
+  await tap('.chip', '只要海鲜');
+  await tap('.sheet-foot .btn', '完成');
+  await until('!document.querySelector(".sheet-wrap") && window.__dinner.S.settings.filter.seafood === "only"', 'seafood only');
+  await tap('[data-act=spin]');
+  await until('!window.__dinner.S.ui.spinning && document.querySelector(".result")', 'pick');
+  assert.ok(/虾|鱼|啦啦|粿条|河粉/.test(await S('S.dishes.find((x) => x.id === S.ui.result).name + S.dishes.find((x) => x.id === S.ui.result).ings.join("")')), 'a seafood dish');
+  await tap('[data-act=filters]');
+  await tap('[data-reset]');
+  await tap('.sheet-foot .btn', '完成');
+  await until('window.__dinner.S.settings.filter.seafood === "no"', 'reset to no seafood');
+  ok('海鲜: 不要海鲜 by default, 只要海鲜 picks seafood, reset → 不要');
+
   // 9. 不想吃这个 → never again
   await tap('[data-act=spin]');
   await until('!window.__dinner.S.ui.spinning && document.querySelector(".result")', 'pick');

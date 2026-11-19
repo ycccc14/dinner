@@ -95,11 +95,28 @@ const VEG_GROUPS = ['番茄', '土豆', '青菜', '茄子', '西兰花', '胡萝
 const MORE_VEG = ['木耳', '芹菜', '荷兰豆', '四季豆', '秋葵', '莲藕', '萝卜', '菠萝', '青豆'];
 export const hasMeat = (d) => (d.ings || []).some((i) => MEAT_GROUPS.includes(groupOf(i)) || MORE_MEAT.some((x) => i.includes(x)));
 export const hasVeg = (d) => (d.ings || []).some((i) => !isPantry(i) && (VEG_GROUPS.includes(groupOf(i)) || MORE_VEG.some((x) => i.includes(x))));
+/**
+ * 海鲜: 'main' = fish, prawns, clams… are part of the dish; 'minor' = only a little dried shrimp / anchovy / shrimp paste
+ * for flavour (fine to leave out); 'none'.
+ */
+const SEA_MINOR = ['虾米', '虾酱', '江鱼仔'];
+export function seafoodOf(d) {
+  const sea = (d.ings || []).filter((i) => !isPantry(i) && (['虾', '鱼'].includes(groupOf(i)) || /啦啦|蟹|蛤|贝|蚝|鱿鱼|墨鱼|海鲜/.test(i)));
+  if (!sea.length) return /虾|鱼|蟹|海鲜/.test(d.name || '') ? 'main' : 'none';
+  return sea.every((i) => SEA_MINOR.includes(i)) && !/虾|鱼/.test(d.name || '') ? 'minor' : 'main';
+}
+export function matchesSeafood(d, s) {
+  if (s === 'no') return seafoodOf(d) !== 'main';
+  if (s === 'only') return seafoodOf(d) === 'main';
+  return true;
+}
+
 /** 有肉有菜: a meat dish or a rice / noodle dish with both meat and vegetables in it. */
 export const isMixed = (d) => (d.type === 'meat' || d.type === 'main') && hasMeat(d) && hasVeg(d);
 
 // Everyday default: no fried / strong-flavoured dishes, beginner-friendly only.
-export const DEFAULT_FILTER = { cuisine: 'all', type: 'all', taste: 'daily', maxTime: 0, level: 1, favOnly: false, noGarlic: false, easyShop: false };
+// The user usually doesn't want seafood: 'no' by default, 'ok' = with seafood, 'only' = seafood only.
+export const DEFAULT_FILTER = { cuisine: 'all', type: 'all', taste: 'daily', seafood: 'no', maxTime: 0, level: 1, favOnly: false, noGarlic: false, easyShop: false };
 export const TASTE_FILTERS = { daily: '日常', light: '少油少盐', heavy: '油炸重口', all: '口味不限' };
 
 export function matchesTaste(d, taste) {
@@ -117,6 +134,7 @@ export function matchesFilter(d, f) {
   if (f.maxTime && d.time > f.maxTime) return false;
   if (f.level && d.level > f.level) return false;
   if (f.favOnly && !d.fav) return false;
+  if (f.seafood && !matchesSeafood(d, f.seafood)) return false;
   if (f.noGarlic && garlicOf(d) === 'must') return false;
   if (f.easyShop && asianIngs(d).length) return false;
   return true;
@@ -170,7 +188,7 @@ export const COMBOS = { mv: { name: '一荤一素', emoji: '🍖🥬', slots: ['
 /** Slot filter: the type filter is replaced by the slot; with 油炸重口 only the meat dish is the treat. */
 export function slotFilter(f, slot) {
   f = f || {};
-  return { ...f, type: slot, taste: f.taste === 'heavy' && (slot === 'veg' || slot === 'soup') ? 'daily' : f.taste };
+  return { ...f, type: slot, taste: f.taste === 'heavy' && (slot === 'veg' || slot === 'soup') ? 'daily' : f.taste, seafood: f.seafood === 'only' && slot === 'veg' ? 'ok' : f.seafood };
 }
 /** o.combo: 'mv' (一荤一素, default) or 'soup'. Returns { kind, slots: { slot: id | null } }. */
 export function pickCombo(dishes, o) {
