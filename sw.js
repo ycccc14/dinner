@@ -1,7 +1,7 @@
 // Offline cache for the app shell. Bump VERSION whenever any file changes (and VERSION in js/app.js): the app
 // checks for a new sw.js every time it opens, installs it in the background and reloads into the new version.
-const VERSION = 'dinner-v1.1.0';
-const FILES = ['./', 'index.html', 'app.css', 'manifest.webmanifest', 'js/app.js', 'js/db.js', 'js/logic.js', 'js/dishes.js',
+const VERSION = 'dinner-v1.2.0';
+const FILES = ['./', 'index.html', 'app.css', 'manifest.webmanifest', 'js/app.js', 'js/db.js', 'js/logic.js', 'js/dishes.js', 'js/shops.js',
   'icons/icon-192.png', 'icons/icon-512.png', 'icons/apple-touch-icon.png', 'icons/maskable-512.png'];
 
 self.addEventListener('install', (e) => {

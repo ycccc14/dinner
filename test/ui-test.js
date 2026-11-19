@@ -104,8 +104,23 @@ try {
   await until('document.querySelector("[name=text]")', 'link sheet');
   await type('[name=text]', '超下饭的可乐鸡翅 http://xhslink.com/a/AbCd123，复制本条信息，打开【小红书】App查看精彩内容！');
   assert.equal(await js('document.querySelector("[name=title]").value'), '超下饭的可乐鸡翅');
+  ph.nextFiles([PHOTO]);
+  await tap('[data-photo]');
+  await until('document.querySelector(".crop img") && document.querySelector(".crop img").complete && parseFloat(document.querySelector(".cbox").style.width) > 20', 'crop sheet');
+  const box0 = await js('document.querySelector(".cbox").style.left + "," + document.querySelector(".cbox").style.top');
+  await js(`(() => { const w = document.querySelector('.crop'); const r = w.getBoundingClientRect(); const ev = (t, x, y) => w.dispatchEvent(new PointerEvent(t, { clientX: x, clientY: y, pointerId: 7, bubbles: true }));
+    ev('pointerdown', r.left + r.width / 2, r.top + r.height / 2); ev('pointermove', r.left + r.width / 2 - 30, r.top + r.height / 2 - 30); ev('pointerup', r.left + r.width / 2 - 30, r.top + r.height / 2 - 30); })()`);
+  await js('document.querySelector(".czoom input").value = 60; document.querySelector(".czoom input").dispatchEvent(new Event("input"))');
+  await full('05a-crop');
+  assert.notEqual(await js('document.querySelector(".cbox").style.left + "," + document.querySelector(".cbox").style.top'), box0, 'dragging moves the frame');
+  await tap('[data-crop]');
+  await until('document.querySelector(".photo-row .ph img")', 'cropped photo in the link sheet');
   await tap('[data-save]');
   await until('window.__dinner.S.dishes.find((d) => d.id === "cola-wings").links.length === 1 && !document.querySelector(".sheet-wrap")', 'link saved');
+  const cover = await S('S.dishes.find((d) => d.id === "cola-wings").photo');
+  assert.ok(cover && cover.startsWith('data:image/jpeg'), 'the screenshot became the dish photo');
+  assert.equal(await js('(() => { const i = new Image(); i.src = document.querySelector(".dhero .plate img").src; return i.naturalWidth === i.naturalHeight; })()'), true, 'cropped square');
+  assert.ok((await text()).includes('食材 · 去哪买') && (await text()).includes('chicken wings'), 'store + English names on the dish page');
   assert.equal(await js('document.querySelector(".link-row a").href'), 'http://xhslink.com/a/AbCd123');
   assert.ok((await js('document.querySelector("a.btn.mine").innerText')).includes('超下饭的可乐鸡翅'));
   await tap('[data-act=to-plan]');
@@ -117,22 +132,35 @@ try {
   await shot('05-dish-actions');
   ok('收藏 · 粘贴小红书链接 · 加入菜单（明天）· 买食材');
 
-  // 6. 两菜一汤
+  // 6. 两道菜: 一荤一素; on a cold evening 荤素一锅 + 汤
   await go('#home');
   await tap('[data-act=mode][data-v=combo]');
-  await tap('[data-act=spin]', '帮我配一桌');
-  await until('document.querySelectorAll(".combo .crow").length === 3', 'combo');
+  assert.ok((await text()).includes('设置城市'), 'hint to set a city');
+  await tap('[data-act=spin]', '帮我配两道');
+  await until('document.querySelectorAll(".combo .crow").length === 2', 'combo');
   const combo = await S('S.ui.combo');
-  const types = await S(`['meat','veg','soup'].map((k) => S.dishes.find((d) => d.id === S.ui.combo[k]).type)`);
-  assert.deepEqual(types, ['meat', 'veg', 'soup']);
-  await tap('[data-act=combo-reroll][data-k=soup]');
-  await until(`window.__dinner.S.ui.combo.soup !== ${JSON.stringify(combo.soup)}`, 'soup rerolled');
-  assert.equal(await S('S.ui.combo.meat'), combo.meat);
+  assert.equal(combo.kind, 'mv');
+  assert.deepEqual(await S(`['meat','veg'].map((k) => S.dishes.find((d) => d.id === S.ui.combo.slots[k]).type)`), ['meat', 'veg']);
+  await tap('[data-act=combo-reroll][data-k=veg]');
+  await until(`window.__dinner.S.ui.combo.slots.veg !== ${JSON.stringify(combo.slots.veg)}`, 'veg rerolled');
+  assert.equal(await S('S.ui.combo.slots.meat'), combo.slots.meat);
   await shot('06-combo');
+  // cold evening (forecast injected): the soup version is suggested
+  await js(`(() => { const S = window.__dinner.S; S.settings.city = 'mel'; S.weather = { city: 'mel', at: Date.now(), days: { ${JSON.stringify(T)}: 9 } }; S.ui.combo = null; window.__dinner.render(); })()`);
+  assert.ok((await text()).includes('有点冷'), 'cold note');
+  assert.ok(await js('document.querySelector(".kinds button.on").textContent.includes("汤")'), 'soup version picked on a cold night');
+  await tap('[data-act=spin]');
+  await until('document.querySelectorAll(".combo .crow").length === 2 && window.__dinner.S.ui.combo.kind === "soup"', 'soup combo');
+  assert.equal(await S('S.dishes.find((d) => d.id === S.ui.combo.slots.soup).type'), 'soup');
+  await shot('06b-combo-cold');
+  await tap('[data-act=combo-kind][data-v=mv]');
+  await tap('[data-act=spin]');
+  await until('window.__dinner.S.ui.combo && window.__dinner.S.ui.combo.kind === "mv"', 'back to 一荤一素');
+  await js(`(() => { const S = window.__dinner.S; S.settings.city = ''; S.weather = null; window.__dinner.render(); })()`);
   await tap('[data-act=choose-combo]');
-  await until(`window.__dinner.S.plan[${JSON.stringify(T)}].length === 4`, 'combo added to tonight');
+  await until(`window.__dinner.S.plan[${JSON.stringify(T)}].length === 3`, 'combo added to tonight');
   await noOverflow('home with combo');
-  ok('两菜一汤: meat + veg + soup, reroll one, 就这些 → tonight');
+  ok('两道菜: 一荤一素 + reroll; cold evening → 荤素一锅 + 汤; 就这些 → tonight');
 
   // 7. 冰箱有啥
   await tap('[data-act=mode][data-v=fridge]');
@@ -188,13 +216,38 @@ try {
   assert.equal(await S('S.dishes.find((x) => x.id === S.ui.result).taste'), 'heavy');
   await tap('[data-act=mode][data-v=combo]');
   await tap('[data-act=spin]');
-  await until('document.querySelectorAll(".combo .crow").length === 3', 'heavy combo');
-  assert.deepEqual(await S(`['meat','veg','soup'].map((k) => S.dishes.find((d) => d.id === S.ui.combo[k]).taste === 'heavy')`), [true, false, false]);
+  await until('window.__dinner.S.ui.combo && document.querySelectorAll(".combo .crow").length === 2', 'heavy combo');
+  assert.deepEqual(await S(`['meat','veg'].map((k) => S.dishes.find((d) => d.id === S.ui.combo.slots[k]).taste === 'heavy')`), [true, false]);
   await tap('[data-act=mode][data-v=one]');
   await tap('.taste button', '日常家常');
   await until('window.__dinner.S.settings.filter.taste === "daily"', 'daily');
   assert.equal(await js('document.querySelector(".filterbar .count")'), null, 'defaults show no filter badge');
   ok('口味: 少油少盐 → only light dishes, 油炸重口 → heavy (combo: only the meat dish), back to 日常');
+
+  // 8c. 不用蒜 + 不用跑亚洲超市
+  await tap('[data-act=filters]');
+  await until('document.querySelector(".fcount")', 'filter sheet');
+  const before8c = Number((await sheetText()).match(/符合条件：(\d+)/)[1]);
+  await tap('.chip', '不用蒜也能做');
+  await tap('.chip', '不用跑亚洲超市');
+  const after8c = Number((await sheetText()).match(/符合条件：(\d+)/)[1]);
+  assert.ok(after8c < before8c && after8c > 20, `${before8c} → ${after8c}`);
+  await tap('.sheet-foot .btn', '完成');
+  await until('!document.querySelector(".sheet-wrap") && window.__dinner.S.settings.filter.noGarlic && window.__dinner.S.settings.filter.easyShop', 'saved');
+  assert.ok((await js('document.querySelector(".fsum").textContent')).includes('不用蒜'));
+  assert.equal(await js('document.querySelector(".filterbar .count").textContent'), '2');
+  for (let i = 0; i < 6; i++) {
+    await tap('[data-act=spin]');
+    await until('!window.__dinner.S.ui.spinning && document.querySelector(".result")', 'pick');
+    const d = await S('S.dishes.find((x) => x.id === S.ui.result)');
+    assert.ok(!/蒜蓉|蒜香/.test(d.name) && !['cucumber-salad', 'bak-kut-teh'].includes(d.id), d.name + ' needs garlic');
+    assert.ok(!(await js('document.querySelector(".result").innerText')).includes('要去亚洲超市'), d.name + ' needs the Asian grocer');
+  }
+  await tap('[data-act=filters]');
+  await tap('[data-reset]');
+  await tap('.sheet-foot .btn', '完成');
+  await until('!window.__dinner.S.settings.filter.noGarlic && !window.__dinner.S.settings.filter.easyShop', 'reset');
+  ok('筛选: 🧄 不用蒜也能做 + 🛒 不用跑亚洲超市 are respected and counted');
 
   // 9. 不想吃这个 → never again
   await tap('[data-act=spin]');
@@ -205,8 +258,23 @@ try {
   await until(`window.__dinner.S.dishes.find((d) => d.id === ${JSON.stringify(nope)}).hidden && window.__dinner.S.ui.result && window.__dinner.S.ui.result !== ${JSON.stringify(nope)} && !window.__dinner.S.ui.spinning`, 'hidden and re-picked');
   ok('不想吃这个 → 以后都别抽到它, then picks again');
 
-  // 10. Library: search, chips, add my own dish with a link
+  // 10. Library: 本周新菜, search, chips, add my own dish with a link
   await go('#dishes');
+  await until('document.querySelectorAll(".newcard .trow").length === 3', 'three suggested dishes this week');
+  const sugg = await S('S.settings.newWeek.ids');
+  const nDishes = await S('S.dishes.length');
+  await tap('.newcard [data-act=extra-add]');
+  await until(`window.__dinner.S.dishes.length === ${nDishes + 1}`, 'added to the library');
+  assert.ok(await S(`S.dishes.some((d) => d.id === ${JSON.stringify(sugg[2])}) || S.dishes.some((d) => d.id === ${JSON.stringify(sugg[0])})`));
+  await tap('.newcard [data-act=extra-no]');
+  await until('document.querySelectorAll(".newcard .trow").length === 1', 'one left');
+  assert.equal((await S('S.settings.extraNo')).length, 1);
+  await tap('[data-act=lib-chip][data-v=more]');
+  assert.ok(await js('document.querySelectorAll(".dcard").length > 20 && document.querySelectorAll(".dadd").length > 20'), 'all suggested dishes, each with ＋');
+  await tap('.dcard');
+  await until('document.querySelector(".newbanner")', 'preview of a suggested dish');
+  await go('#dishes');
+  await tap('[data-act=lib-chip][data-v=all]');
   await type('[data-lib-q]', '鸡翅');
   await until('document.querySelectorAll(".dcard").length >= 2', 'search');
   assert.ok((await js('document.querySelector("#grid").innerText')).includes('可乐鸡翅'));
@@ -260,13 +328,16 @@ try {
   const ws = weekStart(T);
   const emptyFuture = weekDates(ws).filter((d) => d >= T && !(d === T || d === addDays(T, 1)));
   await tap('[data-act=fill-week]');
-  await until(`${JSON.stringify(emptyFuture)}.every((d) => (window.__dinner.S.plan[d] || []).length === 1)`, 'week filled');
+  await until(`${JSON.stringify(emptyFuture)}.every((d) => (window.__dinner.S.plan[d] || []).length === 2)`, 'week filled with 两道菜 a day');
   const before = await S('S.shop.length');
   await tap('[data-act=shop-week]');
   await until(`window.__dinner.S.shop.length > ${before}`, 'shopping list generated');
   await type('[data-form=shop-add] [name=item]', '牛奶 面包');
   await js('document.querySelector("[data-form=shop-add]").requestSubmit()');
   await until('window.__dinner.S.shop.some((x) => x.name === "牛奶") && window.__dinner.S.shop.some((x) => x.name === "面包")', 'typed items');
+  const heads = await js('[...document.querySelectorAll(".shoplist .shead")].map((h) => h.textContent)');
+  assert.ok(heads.some((h) => h.includes('Coles / Woolies / Aldi')), 'grouped by supermarket: ' + heads.join(' | '));
+  assert.ok(heads.some((h) => h.includes('其他')), '面包 is not known → 其他');
   await tap('.sitem [data-act=shop-toggle]');
   await until('window.__dinner.S.shop.some((x) => x.done)', 'checked');
   await full('11-plan');
@@ -282,13 +353,26 @@ try {
   await until(`window.__dinner.S.plan[${JSON.stringify(lastDay)}].includes("dumplings")`, 'dumplings added');
   await tap(`[data-act=plan-rm][data-date="${lastDay}"][data-id=dumplings]`);
   await until(`!(window.__dinner.S.plan[${JSON.stringify(lastDay)}] || []).includes("dumplings")`, 'removed');
-  ok('菜单: 一键排满 → 生成购物清单 → add/check/clear items → add & remove a dish on a day');
+  // 每周自动排菜单: empty the last day, switch it on → refilled
+  if (lastDay >= T) {
+    for (const id of await S(`S.plan[${JSON.stringify(lastDay)}] || []`)) await tap(`[data-act=plan-rm][data-date="${lastDay}"][data-id="${id}"]`);
+    await until(`!(window.__dinner.S.plan[${JSON.stringify(lastDay)}] || []).length`, 'day emptied');
+    await js('(() => { const c = document.querySelector(".autop .switch"); c.checked = true; c.dispatchEvent(new Event("change", { bubbles: true })); })()');
+    await until(`window.__dinner.S.settings.autoPlan && (window.__dinner.S.plan[${JSON.stringify(lastDay)}] || []).length === 2`, 'auto plan filled the day');
+    assert.equal(await S('S.settings.autoPlanned'), ws);
+  }
+  ok('菜单: 两道菜 a day → 购物清单 grouped by supermarket → add/check/clear → add & remove a dish → 每周自动排菜单');
 
   // 13. Records
   await go('#log');
   await until('document.querySelector(".calgrid")', 'log page');
   const lp = await text();
-  assert.ok(lp.includes('做菜记录') && lp.includes('最常做'));
+  assert.ok(lp.includes('做菜记录') && lp.includes('近期分析') && lp.includes('常做的菜') && lp.includes('常用食材'));
+  const shopN = await S('S.shop.length');
+  await tap('.barrow');
+  await until(`window.__dinner.S.shop.length === ${shopN + 1} || window.__dinner.S.shop.length === ${shopN}`, 'ingredient to shopping list');
+  await tap('[data-act=period][data-v="0"]');
+  assert.equal(await S('S.ui.period'), 0);
   assert.ok(await js(`!!document.querySelector('.cd.has[data-date="${T}"]')`));
   await tap(`.cd[data-date="${T}"]`);
   await until('document.querySelector(".sheet .lrow")', 'day sheet');
@@ -304,6 +388,10 @@ try {
   await go('#me');
   await type('[data-set=avoidDays]', '3');
   await until('window.__dinner.S.settings.avoidDays === 3', 'setting saved');
+  await js('(() => { const s = document.querySelector("[data-set=perDay]"); s.value = "1"; s.dispatchEvent(new Event("change", { bubbles: true })); })()');
+  await until('window.__dinner.S.settings.perDay === 1', 'one dish a day');
+  assert.ok(await js('!!document.querySelector("[data-set=city]") && !!document.querySelector("[data-set=learn]")'));
+  await full('13b-settings');
   const backup = await js('window.__dinner.DB.dump().then((d) => JSON.stringify(d))');
   const file = path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'dinner-bk-')), 'backup.json');
   fs.writeFileSync(file, backup);

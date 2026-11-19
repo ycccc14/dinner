@@ -1,7 +1,10 @@
 // node test/logic.test.js — the pure logic: dates, picking, fridge matching, week plans, shopping, stats, link parsing.
 import assert from 'node:assert/strict';
-import { DISHES, CUISINES, TYPES, FRIDGE, PANTRY, TASTES, TASTE_IDS } from '../js/dishes.js';
+import { DISHES, EXTRAS, CUISINES, TYPES, FRIDGE, PANTRY, TASTES, TASTE_IDS, GARLIC_MUST } from '../js/dishes.js';
+import { whereToBuy, storeOf, STORES } from '../js/shops.js';
 import * as L from '../js/logic.js';
+
+const KINDS = ['meat', 'veg', 'soup'];
 
 let n = 0;
 const test = (name, fn) => { fn(); console.log(`  ✓ ${++n}. ${name}`); };
@@ -17,7 +20,14 @@ test('library is well-formed', () => {
     assert.ok(d.name && d.en && d.emoji, d.id + ' names');
   }
   assert.ok(DISHES.length >= 100, 'at least 100 dishes, got ' + DISHES.length);
-  for (const t of L.COMBO) assert.ok(DISHES.filter((d) => d.type === t).length >= 12, 'enough ' + t);
+  for (const t of KINDS) assert.ok(DISHES.filter((d) => d.type === t).length >= 12, 'enough ' + t);
+  const all = [...DISHES, ...EXTRAS];
+  assert.equal(new Set(all.map((d) => d.id)).size, all.length, 'extras have their own ids');
+  assert.equal(new Set(all.map((d) => d.name)).size, all.length, 'extras have their own names');
+  for (const d of EXTRAS) {
+    assert.ok(CUISINES[d.cuisine] && TYPES[d.type] && TASTES[d.taste] && d.level === 1 && d.ings.length && d.en, d.id);
+    assert.equal(L.garlicOf(d), 'none', d.id + ': suggested dishes need no garlic');
+  }
   for (const c of Object.keys(CUISINES)) assert.ok(DISHES.filter((d) => d.cuisine === c).length >= 8, 'enough ' + c);
   assert.equal(new Set(DISHES.map((d) => d.name)).size, DISHES.length, 'unique names');
 });
@@ -114,16 +124,129 @@ test('favourites and good ratings are picked more often, bad ratings less', () =
   assert.ok(salmon < 1300, 'badly rated dish picked less, got ' + salmon);
 });
 
-test('两菜一汤 gives a meat, a vegetable and a soup, all different', () => {
+test('两道菜: 一荤一素 by default; 荤素一锅 + 汤 when asked (cold days)', () => {
   const rng = L.seeded(4);
   for (let i = 0; i < 100; i++) {
     const c = L.pickCombo(ds, { ...base, rng, filter: { type: 'main', cuisine: 'cn' } });
-    const got = L.COMBO.map((k) => ds.find((d) => d.id === c[k]));
-    assert.deepEqual(got.map((d) => d.type), ['meat', 'veg', 'soup'], 'the type filter is ignored');
+    assert.equal(c.kind, 'mv');
+    const got = L.comboIds(c).map((id) => ds.find((d) => d.id === id));
+    assert.deepEqual(got.map((d) => d.type), ['meat', 'veg'], 'the type filter is ignored');
     assert.ok(got.every((d) => d.cuisine === 'cn'));
+    const s = L.pickCombo(ds, { ...base, rng, combo: 'soup', filter: L.DEFAULT_FILTER });
+    const [mixed, soup] = [s.slots.mixed, s.slots.soup].map((id) => ds.find((d) => d.id === id));
+    assert.ok(L.isMixed(mixed) && L.hasMeat(mixed) && L.hasVeg(mixed), mixed.name + ' has meat and vegetables');
+    assert.equal(soup.type, 'soup');
   }
   const c = L.pickCombo(ds, { ...base, rng, filter: { cuisine: 'west', maxTime: 10 } });
-  assert.equal(c.meat, null, 'no western meat dish within 10 minutes');
+  assert.equal(c.slots.meat, null, 'no western meat dish within 10 minutes');
+  const byId = (id) => ds.find((d) => d.id === id);
+  for (const id of ['pepper-pork', 'beef-potato', 'jp-curry', 'broccoli-shrimp']) assert.ok(L.isMixed(byId(id)), id);
+  for (const id of ['kungpao', 'tomato-egg', 'egg-fried-rice', 'corn-rib-soup', 'mapo-tofu']) assert.ok(!L.isMixed(byId(id)), id);
+});
+
+test('soup comes up rarely, unless it is cold', () => {
+  const pair = ds.filter((d) => d.id === 'tomato-egg-soup' || d.id === 'tomato-egg');
+  const rng = L.seeded(11);
+  let warm = 0;
+  let cold = 0;
+  for (let i = 0; i < 4000; i++) {
+    if (L.pickOne(pair, { ...base, rng }).dish.type === 'soup') warm++;
+    if (L.pickOne(pair, { ...base, rng, cold: true }).dish.type === 'soup') cold++;
+  }
+  assert.ok(warm < 1500 && cold > 2000, `soup picked ${warm} (warm) vs ${cold} (cold) of 4000`);
+});
+
+test('不用蒜: only dishes that live on garlic are left out', () => {
+  const byId = (id) => ds.find((d) => d.id === id);
+  for (const id of GARLIC_MUST) assert.equal(L.garlicOf(byId(id)), 'must', id);
+  assert.equal(L.garlicOf(byId('cucumber-pork')), 'opt', 'a little garlic → fine without');
+  assert.equal(L.garlicOf(byId('tomato-egg')), 'none');
+  assert.equal(L.garlicOf({ id: 'u1', name: '蒜蓉茄子', ings: ['茄子'] }), 'must', 'my own 蒜蓉 dish');
+  const f = { ...L.DEFAULT_FILTER, noGarlic: true };
+  const ok = ds.filter((d) => L.matchesFilter(d, f));
+  assert.ok(ok.every((d) => L.garlicOf(d) !== 'must'));
+  assert.ok(ok.some((d) => d.id === 'cucumber-pork') && !ok.some((d) => d.id === 'garlic-greens'));
+  assert.equal(L.activeFilters(f), 1, 'counts as a filter');
+});
+
+test('where to buy: every ingredient has a store; 不用跑亚洲超市 filter', () => {
+  for (const d of [...DISHES, ...EXTRAS]) for (const i of d.ings) assert.ok(whereToBuy(i), 'no store for ' + i);
+  for (const p of PANTRY) assert.ok(whereToBuy(p), 'no store for ' + p);
+  assert.equal(storeOf('鸡蛋'), 'any');
+  assert.equal(storeOf('腊肠'), 'asian');
+  assert.equal(storeOf('豆腐'), 'cw');
+  assert.ok(whereToBuy('豆腐').cheaper && whereToBuy('豆腐').en.includes('tofu'));
+  assert.equal(storeOf('2个番茄'), 'any', 'amounts typed in still match');
+  assert.equal(storeOf('面包'), 'other');
+  assert.ok(STORES.any && STORES.cw && STORES.asian && STORES.other);
+  assert.deepEqual(L.asianIngs(ds.find((d) => d.id === 'veg-rice')), ['腊肠']);
+  const f = { ...L.DEFAULT_FILTER, easyShop: true };
+  const ok = ds.filter((d) => L.matchesFilter(d, f));
+  assert.ok(ok.length >= 40 && ok.every((d) => !L.asianIngs(d).length));
+  assert.ok(!ok.some((d) => d.id === 'veg-rice') && ok.some((d) => d.id === 'tomato-egg'));
+});
+
+test('suggested new dishes: pending until added; a few each week, stable within the week', () => {
+  const recs = [{ id: EXTRAS[0].id, added: true }, { id: EXTRAS[1].id, fav: true }];
+  const all = L.mergeDishes(DISHES, recs, EXTRAS);
+  assert.equal(all.length, DISHES.length + 1);
+  assert.ok(all.find((d) => d.id === EXTRAS[0].id).builtin);
+  const pend = L.pendingExtras(EXTRAS, recs);
+  assert.equal(pend.length, EXTRAS.length - 1);
+  assert.ok(pend.every((d) => d.pending) && pend.find((d) => d.id === EXTRAS[1].id).fav);
+  const w1 = L.weeklyNew(pend, { week: '2026-11-16', n: 3 });
+  assert.equal(w1.length, 3); assert.equal(new Set(w1).size, 3);
+  assert.deepEqual(L.weeklyNew(pend, { week: '2026-11-16', n: 3 }), w1, 'same week → same suggestions');
+  assert.notDeepEqual(L.weeklyNew(pend, { week: '2026-11-23', n: 3 }), w1, 'next week → new ones');
+  assert.ok(!L.weeklyNew(pend, { week: '2026-11-16', n: 3, dismissed: [w1[0]] }).includes(w1[0]), 'dismissed are not suggested');
+});
+
+test('learns the taste from the records; analysis of recent cooking', () => {
+  const logs = [
+    { id: '1', dishId: 'tomato-egg', date: T, rating: 5 }, { id: '2', dishId: 'tomato-egg', date: L.addDays(T, -3), rating: 5 },
+    { id: '3', dishId: 'tomato-egg-soup', date: L.addDays(T, -5), rating: 4 }, { id: '4', dishId: 'bittergourd-egg', date: L.addDays(T, -6), rating: 1 },
+    { id: '5', dishId: 'bittergourd-egg', date: L.addDays(T, -50), rating: 1 }, { id: '6', dishId: 'steak', date: L.addDays(T, -60), rating: 5 },
+  ];
+  const p = L.learnPrefs(logs, ds);
+  assert.equal(p.n, 6);
+  assert.ok(p.groups['番茄'] > 0.3, 'likes tomato');
+  assert.ok(p.groups['瓜类'] < -0.3, 'not bitter gourd');
+  const byId = (id) => ds.find((d) => d.id === id);
+  assert.ok(L.prefBoost(byId('tomato-tofu'), p) > 1.15, 'tomato dishes get a boost');
+  assert.ok(L.prefBoost(byId('luffa-egg-soup'), p) < 1, 'gourd dishes less');
+  assert.equal(L.prefBoost(byId('tomato-tofu'), null), 1);
+  const s = L.tasteSummary(p);
+  assert.ok(s.liked.includes('番茄') && s.disliked.includes('瓜类'));
+  const a = L.analyze(logs, ds, L.addDays(T, -29));
+  assert.equal(a.n, 4); assert.equal(a.distinct, 3);
+  assert.deepEqual(a.dishes[0], { k: 'tomato-egg', count: 2 });
+  assert.equal(a.ings[0].k, '鸡蛋'); assert.equal(a.ings[0].count, 4);
+  assert.equal(a.avg, 15 / 4);
+  assert.equal(a.taste.light, 3);
+  assert.equal(L.analyze(logs, ds, null).n, 6);
+  const miss = L.missYou(L.dishStats(logs), T);
+  assert.deepEqual(miss.map((x) => x.id), ['steak'], 'well rated, not cooked for 60 days');
+});
+
+test('weather: dinner-time temperatures from the forecast; cold days get 荤素一锅 + 汤', () => {
+  const time = [];
+  const temperature_2m = [];
+  for (const [d, base] of [['2026-11-19', 20], ['2026-11-20', 11]]) for (let h = 0; h < 24; h++) { time.push(`${d}T${String(h).padStart(2, '0')}:00`); temperature_2m.push(h >= 18 && h <= 20 ? base + (h - 19) : 99); }
+  const days = L.eveningTemps({ hourly: { time, temperature_2m } });
+  assert.deepEqual(days, { '2026-11-19': 20, '2026-11-20': 11 });
+  assert.deepEqual(L.eveningTemps({}), {});
+  assert.ok(!L.isCold(20) && L.isCold(11) && L.isCold(L.COLD_AT) && !L.isCold(undefined));
+  assert.ok(L.weatherUrl(L.CITIES.mel).includes('latitude=-37.81'));
+  const dates = L.weekDates(L.weekStart(T));
+  const add = L.fillWeek(ds, {}, dates, { ...base, rng: L.seeded(12), perDay: 2, filter: L.DEFAULT_FILTER, coldOn: (d) => L.isCold(days[d]) });
+  assert.deepEqual(Object.keys(add), ['2026-11-19', '2026-11-20', '2026-11-21', '2026-11-22']);
+  assert.ok(Object.values(add).every((ids) => ids.length === 2), 'two dishes a day');
+  const warm = add['2026-11-19'].map((id) => ds.find((d) => d.id === id).type);
+  assert.deepEqual(warm, ['meat', 'veg']);
+  const cold = add['2026-11-20'].map((id) => ds.find((d) => d.id === id));
+  assert.ok(L.isMixed(cold[0]) && cold[1].type === 'soup', 'cold evening → 荤素一锅 + 汤');
+  const flat = Object.values(add).flat();
+  assert.equal(new Set(flat).size, flat.length, 'no repeats in the week');
 });
 
 test('fridge: ingredient groups and matches', () => {
@@ -199,7 +322,7 @@ test('口味: every dish is tagged; everyday default = light, beginner-friendly 
   for (const id of ['kr-fried-chicken', 'tonkatsu', 'mapo-tofu', 'hongshao-rou', 'nasi-lemak']) assert.equal(DISHES.find((d) => d.id === id).taste, 'heavy', id);
   const daily = ds.filter((d) => L.matchesFilter(d, L.DEFAULT_FILTER));
   assert.ok(daily.every((d) => d.taste !== 'heavy' && d.level === 1));
-  for (const t of L.COMBO) {
+  for (const t of KINDS) {
     assert.ok(daily.filter((d) => d.type === t).length >= 10, 'enough everyday ' + t);
     assert.ok(daily.filter((d) => d.type === t && d.taste === 'light').length >= 6, 'enough light ' + t);
   }
@@ -210,10 +333,12 @@ test('口味: every dish is tagged; everyday default = light, beginner-friendly 
     assert.equal(L.pickOne(ds, { ...base, rng, filter: light }).dish.taste, 'light');
     assert.equal(L.pickOne(ds, { ...base, rng, filter: heavy }).dish.taste, 'heavy');
     const lc = L.pickCombo(ds, { ...base, rng, filter: light });
-    assert.ok(L.COMBO.every((k) => ds.find((d) => d.id === lc[k]).taste === 'light'), '少油少盐 两菜一汤');
+    assert.ok(L.comboIds(lc).length === 2 && L.comboIds(lc).every((id) => ds.find((d) => d.id === id).taste === 'light'), '少油少盐 两道菜');
     const hc = L.pickCombo(ds, { ...base, rng, filter: heavy });
-    assert.equal(ds.find((d) => d.id === hc.meat).taste, 'heavy', 'heavy combo: the meat dish is the treat');
-    assert.ok(['veg', 'soup'].every((k) => hc[k] && ds.find((d) => d.id === hc[k]).taste !== 'heavy'), 'veg and soup stay everyday');
+    assert.equal(ds.find((d) => d.id === hc.slots.meat).taste, 'heavy', 'heavy combo: the meat dish is the treat');
+    assert.ok(hc.slots.veg && ds.find((d) => d.id === hc.slots.veg).taste !== 'heavy', 'the vegetable stays everyday');
+    const hs = L.pickCombo(ds, { ...base, rng, combo: 'soup', filter: heavy });
+    assert.ok(hs.slots.soup && ds.find((d) => d.id === hs.slots.soup).taste !== 'heavy', 'so does the soup');
   }
   // light dishes come up more often than normal ones
   const pair = ds.filter((d) => d.id === 'tomato-egg' || d.id === 'potato-shreds');

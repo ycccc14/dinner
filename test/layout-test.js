@@ -113,7 +113,7 @@ try {
     // home modes with results
     await go('#home');
     for (const m of ['one', 'combo']) {
-      await js(`(() => { const S = window.__dinner.S; S.ui.mode = '${m}'; S.ui.result = 'u1'; S.ui.combo = { meat: 'kungpao', veg: 'u1', soup: 'pork-stomach-soup' }; window.__dinner.render(); })()`);
+      await js(`(() => { const S = window.__dinner.S; S.ui.mode = '${m}'; S.ui.result = 'u1'; S.ui.combo = { kind: 'soup', slots: { mixed: 'kungpao', soup: 'pork-stomach-soup' } }; S.settings.city = 'mel'; S.weather = { city: 'mel', at: Date.now(), days: { [new Date().toLocaleDateString('sv')]: 9 } }; window.__dinner.render(); })()`);
       await check('#home ' + m);
     }
     await js(`(() => { const S = window.__dinner.S; S.ui.mode = 'fridge'; S.ui.fridge = ['鸡蛋', '鸡肉', '番茄', '土豆', '面条']; S.ui.fridgePick = 'u1'; window.__dinner.render(); })()`);

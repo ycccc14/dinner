@@ -229,6 +229,55 @@ const HEAVY = new Set(['cola-wings', 'kungpao', 'hongshao-rou', 'sweet-sour-ribs
   'kr-fried-chicken', 'tteokbokki', 'budae', 'tonkatsu', 'carbonara', 'baked-rice', 'burger', 'green-curry', 'tom-yum']);
 export const TASTE_IDS = { light: LIGHT, heavy: HEAVY };
 
+// Garlic is the point of these dishes (蒜蓉 / 蒜香…). Other dishes that list 蒜 work fine without it (more 姜 / 葱 instead).
+export const GARLIC_MUST = new Set(['garlic-prawns', 'garlic-greens', 'garlic-broccoli', 'cucumber-salad', 'aglio-olio', 'butter-shrimp', 'bak-kut-teh', 'lime-fish']);
+
 export const DISHES = RAW.map(([id, name, en, emoji, cuisine, type, time, level, ings]) => ({
   id, name, en, emoji, cuisine, type, time, level, ings: ings.split(' '), taste: LIGHT.has(id) ? 'light' : HEAVY.has(id) ? 'heavy' : 'normal',
+}));
+
+// 每周新菜: not in the library yet. Each week the app suggests a few of these (matched to the user's taste); one tap adds them.
+// Same columns as above + 口味 (l = 少油少盐, n = 家常, h = 重口). All easy, everyday, no garlic needed, ingredients from Coles / Woolies / Aldi.
+const EXTRA_RAW = [
+  ['potato-chicken', '土豆烧鸡块', 'Chicken & Potato Braise', '🍗', 'cn', 'meat', 40, 1, '鸡腿 土豆 胡萝卜', 'n'],
+  ['carrot-pork', '胡萝卜炒肉丝', 'Carrot & Pork Stir-fry', '🥕', 'cn', 'meat', 15, 1, '猪肉 胡萝卜', 'l'],
+  ['mushroom-pork', '蘑菇炒肉片', 'Mushroom & Pork Slices', '🍄', 'cn', 'meat', 15, 1, '蘑菇 猪肉 葱', 'l'],
+  ['broccoli-beef', '西兰花炒牛肉', 'Beef & Broccoli', '🥦', 'cn', 'meat', 15, 1, '牛肉 西兰花 蚝油', 'n'],
+  ['capsicum-chicken', '彩椒鸡丁', 'Capsicum Chicken', '🫑', 'cn', 'meat', 15, 1, '鸡胸肉 甜椒 洋葱', 'l'],
+  ['tomato-beef', '番茄炖牛腩', 'Tomato Beef Brisket', '🍅', 'cn', 'meat', 90, 1, '牛腩 番茄 洋葱', 'n'],
+  ['zucchini-pork', '西葫芦炒肉片', 'Zucchini & Pork', '🥒', 'cn', 'meat', 15, 1, '西葫芦 猪肉', 'l'],
+  ['lemon-chicken', '柠檬煎鸡胸', 'Lemon Pan-fried Chicken Breast', '🍋', 'west', 'meat', 20, 1, '鸡胸肉 柠檬 黑胡椒', 'l'],
+  ['cabbage-pork', '包菜炒肉片', 'Cabbage & Pork Stir-fry', '🥬', 'cn', 'meat', 15, 1, '包菜 猪肉 酱油', 'n'],
+  ['eggplant-mince', '肉末茄子', 'Eggplant with Minced Pork', '🍆', 'cn', 'meat', 20, 1, '茄子 猪肉碎 酱油', 'n'],
+  ['beansprout-pork', '豆芽炒肉丝', 'Bean Sprouts & Pork', '🌱', 'cn', 'meat', 10, 1, '豆芽 猪肉 葱', 'l'],
+  ['chicken-mushroom-stew', '小鸡炖蘑菇', 'Chicken & Mushroom Stew', '🍄', 'cn', 'meat', 45, 1, '鸡腿 蘑菇 土豆', 'n'],
+  ['salmon-broccoli', '烤三文鱼配西兰花', 'Baked Salmon & Broccoli', '🐟', 'west', 'meat', 25, 1, '三文鱼 西兰花 柠檬', 'l'],
+  ['honey-soy-chicken', '蜜汁鸡腿', 'Honey Soy Chicken Thighs', '🍗', 'cn', 'meat', 30, 1, '鸡腿 蜂蜜 酱油', 'n'],
+  ['shrimp-tofu', '虾仁豆腐', 'Shrimp & Tofu', '🍤', 'cn', 'meat', 15, 1, '虾仁 豆腐 葱', 'l'],
+  ['chicken-stew-west', '奶油炖鸡', 'Creamy Chicken Stew', '🍲', 'west', 'meat', 40, 1, '鸡腿 土豆 胡萝卜 淡奶油', 'n'],
+  ['steamed-eggplant', '蒸茄子', 'Steamed Eggplant', '🍆', 'cn', 'veg', 15, 1, '茄子 酱油 葱', 'l'],
+  ['vinegar-cabbage', '醋溜白菜', 'Vinegar Napa Cabbage', '🥬', 'cn', 'veg', 10, 1, '白菜 醋', 'l'],
+  ['spinach-egg', '菠菜炒蛋', 'Spinach & Egg', '🥬', 'cn', 'veg', 10, 1, '菠菜 鸡蛋', 'l'],
+  ['potato-slices', '清炒土豆片', 'Stir-fried Potato Slices', '🥔', 'cn', 'veg', 15, 1, '土豆 葱', 'n'],
+  ['corn-carrot', '玉米炒胡萝卜青豆', 'Corn, Carrot & Peas', '🌽', 'cn', 'veg', 10, 1, '玉米 胡萝卜 青豆', 'l'],
+  ['mushroom-bokchoy', '蘑菇炒小白菜', 'Bok Choy with Mushrooms', '🍄', 'cn', 'veg', 10, 1, '小白菜 蘑菇', 'l'],
+  ['cucumber-egg', '黄瓜炒蛋', 'Cucumber & Egg', '🥒', 'cn', 'veg', 10, 1, '黄瓜 鸡蛋', 'l'],
+  ['pan-tofu', '香煎豆腐', 'Pan-fried Tofu', '🧊', 'cn', 'veg', 15, 1, '豆腐 酱油 葱', 'n'],
+  ['broccoli-carrot', '西兰花炒胡萝卜', 'Broccoli & Carrot', '🥦', 'cn', 'veg', 10, 1, '西兰花 胡萝卜', 'l'],
+  ['kelp-tofu-soup', '海带豆腐汤', 'Kelp & Tofu Soup', '🥣', 'cn', 'soup', 20, 1, '海带 豆腐', 'l'],
+  ['chicken-corn-soup', '鸡肉玉米羹', 'Chicken & Sweet Corn Soup', '🌽', 'cn', 'soup', 20, 1, '鸡胸肉 玉米 鸡蛋', 'l'],
+  ['tomato-beef-soup', '番茄土豆牛肉汤', 'Tomato, Potato & Beef Soup', '🍲', 'cn', 'soup', 60, 1, '牛肉 番茄 土豆', 'l'],
+  ['mushroom-tofu-soup', '菌菇豆腐汤', 'Mushroom & Tofu Soup', '🍄', 'cn', 'soup', 15, 1, '蘑菇 豆腐 小白菜', 'l'],
+  ['spinach-egg-soup', '菠菜蛋花汤', 'Spinach Egg Drop Soup', '🥬', 'cn', 'soup', 10, 1, '菠菜 鸡蛋', 'l'],
+  ['chicken-veg-soup', '鸡肉蔬菜汤', 'Chicken Vegetable Soup', '🍲', 'west', 'soup', 40, 1, '鸡腿 胡萝卜 芹菜 土豆', 'l'],
+  ['tomato-beef-rice', '番茄牛肉焖饭', 'Tomato Beef One-pot Rice', '🍅', 'cn', 'main', 40, 1, '米 牛肉碎 番茄 土豆', 'n'],
+  ['chicken-mushroom-rice', '香菇鸡肉焖饭', 'Chicken & Mushroom One-pot Rice', '🍚', 'cn', 'main', 40, 1, '米 鸡腿 香菇 胡萝卜', 'n'],
+  ['chicken-fried-rice', '鸡肉蔬菜炒饭', 'Chicken & Veg Fried Rice', '🍳', 'cn', 'main', 15, 1, '米饭 鸡胸肉 鸡蛋 胡萝卜 玉米', 'n'],
+  ['pork-noodle-soup', '青菜肉丝汤面', 'Pork & Greens Noodle Soup', '🍜', 'cn', 'main', 15, 1, '面条 猪肉 青菜', 'l'],
+  ['chicken-udon', '鸡肉乌冬汤', 'Chicken Udon Soup', '🍜', 'jk', 'main', 20, 1, '乌冬 鸡腿 小白菜 蘑菇', 'l'],
+  ['sukiyaki', '寿喜锅', 'Sukiyaki Hot Pot', '🍲', 'jk', 'main', 30, 1, '肥牛片 豆腐 白菜 蘑菇', 'n'],
+];
+const TASTE_OF = { l: 'light', n: 'normal', h: 'heavy' };
+export const EXTRAS = EXTRA_RAW.map(([id, name, en, emoji, cuisine, type, time, level, ings, t]) => ({
+  id, name, en, emoji, cuisine, type, time, level, ings: ings.split(' '), taste: TASTE_OF[t], extra: true,
 }));
