@@ -12,7 +12,7 @@ import {
   searchQ, xhsApp, xhsWeb, xcfWeb, ytWeb, parseShared, stars,
 } from './logic.js';
 
-export const VERSION = '1.4.0';
+export const VERSION = '1.4.1';
 const $ = (s, r = document) => r.querySelector(s);
 const $$ = (s, r = document) => [...r.querySelectorAll(s)];
 const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
@@ -140,12 +140,25 @@ function weekNew() {
 }
 
 // ---------- small UI helpers ----------
-function toast(msg) {
+function toast(msg, undo) {
   const t = $('#toast');
   t.textContent = msg;
+  t.classList.toggle('act', !!undo);
+  if (undo) { // a slip of the finger can be taken back: 撤销 stays up a little longer
+    const b = document.createElement('button');
+    b.type = 'button';
+    b.className = 'tundo';
+    b.textContent = '撤销';
+    b.onclick = async () => {
+      b.onclick = null;
+      t.classList.remove('show', 'act');
+      try { await undo(); } catch (err) { console.error(err); toast('撤销失败：' + (err.message || err)); }
+    };
+    t.append(' ', b);
+  }
   t.classList.add('show');
   clearTimeout(toast.timer);
-  toast.timer = setTimeout(() => t.classList.remove('show'), 2600);
+  toast.timer = setTimeout(() => t.classList.remove('show', 'act'), undo ? 5000 : 2600);
 }
 
 function sheet(title, html, opts) {
@@ -539,8 +552,9 @@ function Plan() {
   const item = (x) => {
     const w = whereToBuy(x.name);
     const sub = [w ? w.en : '', w && w.cheaper && !x.done ? '亚洲超市更便宜' : '', x.for && x.for.length ? x.for.join('、') : ''].filter(Boolean).join(' · ');
-    return `<div class="sitem ${x.done ? 'done' : ''}"><button class="check" data-act="shop-toggle" data-id="${x.id}" aria-label="${x.done ? '标为未买' : '买到了'}">${x.done ? '✓' : ''}</button>
-    <div class="grow"><span>${esc(x.name)}</span>${sub ? `<small>${esc(sub)}</small>` : ''}</div><button class="x" data-act="shop-del" data-id="${x.id}" aria-label="删除">✕</button></div>`;
+    // The whole row is one big button (easy to hit with a thumb in the supermarket); ✕ is separate.
+    return `<div class="sitem ${x.done ? 'done' : ''}"><button class="stog" data-act="shop-toggle" data-id="${x.id}" aria-pressed="${x.done ? 'true' : 'false'}"><span class="check" aria-hidden="true">${x.done ? '✓' : ''}</span>
+    <span class="grow"><span>${esc(x.name)}</span>${sub ? `<small>${esc(sub)}</small>` : ''}</span></button><button class="x" data-act="shop-del" data-id="${x.id}" aria-label="删除 ${esc(x.name)}">✕</button></div>`;
   };
   const byStore = STORE_ORDER.map((k) => [k, left.filter((x) => storeOf(x.name) === k)]).filter(([, l]) => l.length);
   return `
@@ -1075,10 +1089,31 @@ const ACTS = {
     await setPlan(date, ids);
     render();
   },
-  async 'plan-rm'({ date, id }) { await setPlan(date, (S.plan[date] || []).filter((x) => x !== id)); render(); },
+  async 'plan-rm'({ date, id }) {
+    const before = [...(S.plan[date] || [])];
+    const d = dishById(id);
+    await setPlan(date, before.filter((x) => x !== id));
+    render();
+    toast(`已从 ${fmtDate(date, false)} 拿掉「${d ? d.name : '这道菜'}」`, async () => {
+      const now = S.plan[date] || [];
+      await setPlan(date, [...before.filter((x) => x === id || now.includes(x)), ...now.filter((x) => !before.includes(x))]);
+      render();
+    });
+  },
   async 'shop-toggle'({ id }) { await saveShop(S.shop.map((x) => (x.id === id ? { ...x, done: !x.done } : x))); render(); },
-  async 'shop-del'({ id }) { await saveShop(S.shop.filter((x) => x.id !== id)); render(); },
-  async 'shop-clear'() { await saveShop(S.shop.filter((x) => !x.done)); render(); toast('已清除'); },
+  async 'shop-del'({ id }) {
+    const gone = S.shop.find((x) => x.id === id);
+    if (!gone) return;
+    await saveShop(S.shop.filter((x) => x.id !== id));
+    render();
+    toast(`已删除「${gone.name}」`, async () => { if (!S.shop.some((x) => x.id === gone.id)) await saveShop([...S.shop, gone]); render(); });
+  },
+  async 'shop-clear'() {
+    const gone = S.shop.filter((x) => x.done);
+    await saveShop(S.shop.filter((x) => !x.done));
+    render();
+    toast(`已清除 ${gone.length} 样买好的`, async () => { await saveShop([...S.shop, ...gone.filter((g) => !S.shop.some((x) => x.id === g.id))]); render(); });
+  },
   month: ({ v }) => { S.ui.month = addMonths(S.ui.month || today().slice(0, 7), Number(v)); render(); },
   day: ({ date }) => {
     const ls = S.logs.filter((l) => l.date === date).sort(byDateDesc);

@@ -360,21 +360,43 @@ try {
   const heads = await js('[...document.querySelectorAll(".shoplist .shead")].map((h) => h.textContent)');
   assert.ok(heads.some((h) => h.includes('Coles / Woolies / Aldi')), 'grouped by supermarket: ' + heads.join(' | '));
   assert.ok(heads.some((h) => h.includes('其他')), '面包 is not known → 其他');
-  await tap('.sitem [data-act=shop-toggle]');
-  await until('window.__dinner.S.shop.some((x) => x.done)', 'checked');
+  // the whole row is the 买到了 button: tapping the item's name ticks it
+  assert.ok(await js('!!document.querySelector(".sitem .stog .grow span") && !document.querySelector(".sitem .stog button")'), 'name sits inside the row button, no nested buttons');
+  await tap('.sitem .stog .grow span', '牛奶');
+  await until('window.__dinner.S.shop.find((x) => x.name === "牛奶").done', 'ticked by tapping the name');
+  assert.equal(await js('[...document.querySelectorAll(".sitem")].find((r) => r.textContent.includes("牛奶")).querySelector(".stog").getAttribute("aria-pressed")'), 'true');
+  // ✕ → 撤销 brings the item back in the same place
+  const order = await S('S.shop.filter((x) => !x.done).sort((a, b) => a.createdAt - b.createdAt).map((x) => x.id)');
+  const n0 = await S('S.shop.length');
+  await tap(`.sitem [data-act=shop-del][data-id="${order[0]}"]`);
+  await until(`window.__dinner.S.shop.length === ${n0 - 1} && document.querySelector('#toast.show.act .tundo')`, 'deleted with 撤销');
+  assert.ok((await js('document.querySelector("#toast").textContent')).includes('已删除'));
   await full('11-plan');
+  await js('document.querySelector("#toast .tundo").click()');
+  await until(`window.__dinner.S.shop.length === ${n0} && !!document.querySelector('.sitem [data-id="${order[0]}"]')`, 'undo brought it back');
+  assert.deepEqual(await S('S.shop.filter((x) => !x.done).sort((a, b) => a.createdAt - b.createdAt).map((x) => x.id)'), order, 'same place in the list');
+  assert.ok(!(await js('document.querySelector("#toast").classList.contains("show")')), 'toast gone after 撤销');
   await noOverflow('plan');
   const n = await S('S.shop.length');
   await tap('[data-act=shop-clear]');
   await until(`window.__dinner.S.shop.length === ${n - 1}`, 'cleared bought');
+  await js('document.querySelector("#toast .tundo").click()');
+  await until(`window.__dinner.S.shop.length === ${n} && window.__dinner.S.shop.find((x) => x.name === "牛奶").done`, 'undo clear');
+  await tap('[data-act=shop-clear]');
+  await until(`window.__dinner.S.shop.length === ${n - 1}`, 'cleared bought again');
   // add to a day by searching
   const lastDay = weekDates(ws)[6];
   await tap(`[data-act=plan-add][data-date="${lastDay}"]`);
   await type('.sheet [data-q]', '饺子');
   await tap('.pitem', '饺子');
   await until(`window.__dinner.S.plan[${JSON.stringify(lastDay)}].includes("dumplings")`, 'dumplings added');
+  const dayBefore = await S(`S.plan[${JSON.stringify(lastDay)}]`);
   await tap(`[data-act=plan-rm][data-date="${lastDay}"][data-id=dumplings]`);
   await until(`!(window.__dinner.S.plan[${JSON.stringify(lastDay)}] || []).includes("dumplings")`, 'removed');
+  await js('document.querySelector("#toast .tundo").click()');
+  await until(`JSON.stringify(window.__dinner.S.plan[${JSON.stringify(lastDay)}]) === ${JSON.stringify(JSON.stringify(dayBefore))}`, 'undo put it back in the same order');
+  await tap(`[data-act=plan-rm][data-date="${lastDay}"][data-id=dumplings]`);
+  await until(`!(window.__dinner.S.plan[${JSON.stringify(lastDay)}] || []).includes("dumplings")`, 'removed again');
   // 每周自动排菜单: empty the last day, switch it on → refilled
   if (lastDay >= T) {
     for (const id of await S(`S.plan[${JSON.stringify(lastDay)}] || []`)) await tap(`[data-act=plan-rm][data-date="${lastDay}"][data-id="${id}"]`);
