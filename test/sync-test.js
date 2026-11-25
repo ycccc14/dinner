@@ -129,7 +129,7 @@ try {
     { store: 'logs', id: `x" onmouseover="${trap}`, at, rec: { id: `x" onmouseover="${trap}`, dishId: 'steak', date: T } },
     { store: 'shop', id: 'after-junk', at, rec: { id: 'after-junk', name: '酱油膏', done: false, for: [] } },
   ] });
-  assert.equal(r.accepted, 4, 'the old server takes anything (S1/N2 not fixed yet)');
+  assert.equal(r.accepted, 4, 'records are only checked on the phones (the server just limits sizes)');
   await A.until('window.__dinner.S.shop.some((x) => x.id === "after-junk")', 'A got the normal item after the junk', WAIT);
   const lost = await S(A, 'S.logs.find((l) => l.id === "lost-photo")');
   assert.ok(lost && !lost.photo, 'record kept, missing photo skipped');
@@ -144,6 +144,25 @@ try {
   assert.equal(await A.js('window.__pwned'), undefined, 'no injected code ran');
   ok('junk from the server: missing photo skipped (sync goes on), bad photo / id / link dropped, nothing runs');
 
+  // The server refuses A's photo (too big for its limit): the record still reaches B, A keeps its photo.
+  fake.props.MAX_PHOTO = '100';
+  const bBefore = await S(B, 'S.logs.length');
+  await go(A, '#dish/steak');
+  await A.tap('[data-act=log-new]');
+  A.nextFiles([path.join(ROOT, 'icons', 'icon-512.png')]); // a photo the server hasn't seen yet
+  await A.tap('[data-photo]');
+  await A.until('document.querySelector(".ph img")', 'photo 2');
+  await A.tap('[data-save]');
+  await A.until('!document.querySelector(".sheet-wrap")', 'logged 2');
+  await B.until(`window.__dinner.S.logs.length === ${bBefore + 1}`, 'B got the record without its photo', WAIT);
+  const newest = await S(B, 'S.logs.find((l) => l.dishId === "steak" && l.id !== "lost-photo")');
+  assert.ok(newest && !newest.photo, 'B: record without the refused photo');
+  await sleep(6000); // A pulls its own change back at least once
+  assert.ok((await S(A, `S.logs.find((l) => l.id === ${JSON.stringify(newest.id)})`)).photo.startsWith('data:image/jpeg'), 'A keeps its photo');
+  assert.equal(await A.js('window.__dinner.Sync.status.error'), '', 'no sync error on A');
+  delete fake.props.MAX_PHOTO;
+  ok('a photo the server refuses doesn\'t block the sync: the record still reaches B, A keeps the photo');
+
   // B stops syncing: its data stays, A is not affected
   await go(B, '#me');
   await B.tap('[data-act=sync-leave]');
@@ -152,7 +171,7 @@ try {
   const bLogs = await S(B, 'S.logs.length');
   await sleep(300);
   assert.equal(await S(B, 'S.logs.length'), bLogs, 'B keeps its records');
-  assert.equal(await S(A, 'S.logs.length'), 3, 'A keeps its two + the one from the junk step');
+  assert.equal(await S(A, 'S.logs.length'), 4, 'A keeps its three + the one from the junk step');
   ok('停止同步 on B keeps its data and leaves A alone');
 
   assert.deepEqual([...A.errors, ...B.errors], [], 'console errors');

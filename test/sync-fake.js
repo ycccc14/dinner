@@ -32,7 +32,7 @@ export function fakeServer() {
   };
   const context = {
     console, JSON, Math, Date, Array, Object, String, Number, Error,
-    PropertiesService: { getScriptProperties: () => ({ getProperty: (k) => (k in props ? props[k] : null), setProperty: (k, v) => { props[k] = String(v); } }) },
+    PropertiesService: { getScriptProperties: () => ({ getProperty: (k) => (k in props ? props[k] : null), setProperty: (k, v) => { props[k] = String(v); }, getProperties: () => ({ ...props }) }) },
     LockService: { getScriptLock: () => ({ waitLock() {}, releaseLock() {} }) },
     DriveApp: {
       createFolder: (n) => mkFolder(n),
@@ -41,6 +41,7 @@ export function fakeServer() {
     Utilities: {
       DigestAlgorithm: { SHA_256: 'sha256' }, Charset: { UTF_8: 'utf8' },
       computeDigest: (alg, v) => signed(crypto.createHash('sha256').update(Buffer.from(v, 'utf8')).digest()),
+      getUuid: () => crypto.randomUUID(),
     },
     ContentService: { MimeType: { JSON: 'json' }, createTextOutput: (s) => ({ text: s, setMimeType() { return this; } }) },
   };

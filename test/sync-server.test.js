@@ -67,4 +67,65 @@ test('spaces are separate', () => {
   assert.equal(post({ fn: 'photo-get', code: other, id: 'abc123' }).ok, false);
 });
 
+test('a broken data.json stops the sync instead of wiping the history; a daily backup is kept', () => {
+  const c = post({ fn: 'create' }).code;
+  post({ fn: 'push', code: c, items: [{ store: 'logs', id: 'keep', at: 10, rec: { id: 'keep', dishId: 'a' } }] });
+  post({ fn: 'push', code: c, items: [{ store: 'logs', id: 'keep2', at: 20, rec: { id: 'keep2', dishId: 'b' } }] });
+  const folder = S.folders[S.props[Object.keys(S.props).find((k) => k.startsWith('S_') && S.folders[S.props[k]].files.some((f) => f.name === 'data.json' && f.content.includes('keep2')))]];
+  const bak = folder.files.find((f) => f.name === 'data.bak.json');
+  assert.ok(bak && bak.content.includes('"keep"') && !bak.content.includes('keep2'), 'the version before today\'s first change is kept');
+  const writes = folder.files.filter((f) => f.name === 'data.bak.json').length;
+  post({ fn: 'push', code: c, items: [{ store: 'logs', id: 'keep3', at: 30, rec: { id: 'keep3' } }] });
+  assert.equal(folder.files.filter((f) => f.name === 'data.bak.json').length, writes, 'one backup file');
+  assert.ok(!bak.content.includes('keep2'), 'backup made at most once a day');
+  const data = folder.files.find((f) => f.name === 'data.json');
+  const good = data.content;
+  for (const junk of ['{"rev":5,"items":{"x', '', 'null', '[]', '{"rev":"7","items":{}}', '{"rev":3,"items":[]}']) {
+    data.content = junk;
+    const r = post({ fn: 'push', code: c, items: [{ store: 'logs', id: 'new', at: 40, rec: { id: 'new' } }] });
+    assert.equal(r.ok, false, 'push refused for ' + JSON.stringify(junk));
+    assert.match(r.error, /读不出来/);
+    assert.equal(data.content, junk, 'nothing was written over it');
+    assert.equal(post({ fn: 'pull', code: c, since: 0 }).ok, false, 'pull says so too');
+  }
+  data.content = good;
+  assert.equal(post({ fn: 'push', code: c, items: [{ store: 'logs', id: 'new', at: 40, rec: { id: 'new' } }] }).ok, true, 'works again once repaired');
+  assert.deepEqual(post({ fn: 'pull', code: c, since: 0 }).changes.map((x) => x.id).sort(), ['keep', 'keep2', 'keep3', 'new']);
+});
+
+test('limits: photo size / type / count, batch size, record size, number of spaces', () => {
+  const c = post({ fn: 'create' }).code;
+  assert.equal(post({ fn: 'photo-put', code: c, id: 'aa11', data: 'data:image/jpeg;base64,' + 'A'.repeat(2600000) }).error, 'photo too big');
+  assert.equal(post({ fn: 'photo-put', code: c, id: 'aa12', data: 'data:image/svg+xml;base64,AAAA' }).error, 'bad photo', 'only jpeg / png / webp');
+  S.props.MAX_PHOTOS = '2';
+  assert.equal(post({ fn: 'photo-put', code: c, id: 'b1', data: 'data:image/png;base64,AAAA' }).ok, true);
+  assert.equal(post({ fn: 'photo-put', code: c, id: 'b2', data: 'data:image/png;base64,AAAA' }).ok, true);
+  assert.equal(post({ fn: 'photo-put', code: c, id: 'b1', data: 'data:image/png;base64,AAAA' }).ok, true, 'one already stored is fine');
+  assert.equal(post({ fn: 'photo-put', code: c, id: 'b3', data: 'data:image/png;base64,AAAA' }).error, 'photo limit');
+  delete S.props.MAX_PHOTOS;
+  const many = Array.from({ length: 251 }, (_, i) => ({ store: 'shop', id: 's' + i, at: 1, rec: { id: 's' + i } }));
+  assert.equal(post({ fn: 'push', code: c, items: many }).ok, false, 'more than 250 at once');
+  const r = post({ fn: 'push', code: c, items: [
+    { store: 'logs', id: 'huge', at: 1, rec: { id: 'huge', note: 'x'.repeat(60000) } },
+    { store: 'logs', id: 'fine', at: 1, rec: { id: 'fine', note: 'ok' } },
+  ] });
+  assert.equal(r.accepted, 1); assert.equal(r.skipped, 1, 'an oversized record is skipped, the rest still goes in');
+  S.props.MAX_ITEMS = '2';
+  const r2 = post({ fn: 'push', code: c, items: [{ store: 'logs', id: 'n1', at: 2, rec: { id: 'n1' } }, { store: 'logs', id: 'n2', at: 2, rec: { id: 'n2' } }, { store: 'logs', id: 'fine', at: 3, rec: { id: 'fine', note: 'edited' } }] });
+  assert.equal(r2.accepted, 2, 'full space: new records refused, edits to existing ones still accepted');
+  delete S.props.MAX_ITEMS;
+  const spaces = Object.keys(S.props).filter((k) => k.startsWith('S_')).length;
+  S.props.MAX_SPACES = String(spaces);
+  assert.match(post({ fn: 'create' }).error, /满了/);
+  S.props.MAX_SPACES = String(spaces + 1);
+  assert.equal(post({ fn: 'create' }).ok, true, 'the limit can be raised in Script Properties');
+  delete S.props.MAX_SPACES;
+});
+
+test('sync codes are not repeated', () => {
+  const seen = new Set();
+  for (let i = 0; i < 20; i++) seen.add(post({ fn: 'create' }).code);
+  assert.equal(seen.size, 20);
+});
+
 console.log(`\nAll ${n} sync server tests passed.`);

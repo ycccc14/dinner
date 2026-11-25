@@ -12,7 +12,7 @@ import {
   searchQ, xhsApp, xhsWeb, xcfWeb, ytWeb, parseShared, stars, cleanRecord, cleanKv, safeUrl,
 } from './logic.js';
 
-export const VERSION = '1.4.2';
+export const VERSION = '1.4.3';
 const $ = (s, r = document) => r.querySelector(s);
 const $$ = (s, r = document) => [...r.querySelectorAll(s)];
 const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));

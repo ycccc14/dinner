@@ -138,7 +138,13 @@ async function withPhotoRef(rec) {
   if (typeof rec.photo !== 'string' || !rec.photo.startsWith('data:')) return rec;
   const h = await hash(rec.photo);
   if (!cfg.photos.includes(h)) {
-    await call({ fn: 'photo-put', code: cfg.code, id: h, data: rec.photo });
+    try { await call({ fn: 'photo-put', code: cfg.code, id: h, data: rec.photo }); } catch (e) {
+      if (!e.answered) throw e; // network / Drive trouble: try the whole push again later
+      // The server refused this photo (too big, photo limit reached): send the record without it rather than
+      // holding up every other change. The photo stays on this phone.
+      const { photo, ...rest } = rec;
+      return rest;
+    }
     cfg.photos.push(h);
     await saveCfg();
   }
