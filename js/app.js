@@ -9,10 +9,10 @@ import {
   SLOTS, COMBOS, slotFilter, pickCombo, comboIds, garlicOf, asianIngs, seafoodOf, matchesSeafood,
   fridgeMatches, pickFridge, weekDates, fillWeek, shoppingFrom, mergeShop, streak,
   learnPrefs, tasteSummary, analyze, missYou, weeklyNew, CITIES, COLD_AT, isCold, weatherUrl, eveningTemps,
-  searchQ, xhsApp, xhsWeb, xcfWeb, ytWeb, parseShared, stars,
+  searchQ, xhsApp, xhsWeb, xcfWeb, ytWeb, parseShared, stars, cleanRecord, cleanKv, safeUrl,
 } from './logic.js';
 
-export const VERSION = '1.4.1';
+export const VERSION = '1.4.2';
 const $ = (s, r = document) => r.querySelector(s);
 const $$ = (s, r = document) => [...r.querySelectorAll(s)];
 const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
@@ -36,11 +36,15 @@ const S = {
 
 // ---------- data ----------
 async function load() {
-  const [recs, logs, plan, shop, kv] = await Promise.all(DB.STORES.map((s) => DB.all(s)));
-  S.recs = recs;
-  S.logs = logs;
-  S.plan = Object.fromEntries(plan.map((p) => [p.id, p.dishes || []]));
-  S.shop = shop;
+  // Everything read from storage goes through the same checks as synced / imported data (logic.js cleanRecord):
+  // anything stored by an older version from a bad sync or backup can't reach the page either.
+  const [recs, logs, plan, shop, kvRaw] = await Promise.all(DB.STORES.map((s) => DB.all(s)));
+  const ok = (store, rows) => rows.map((r) => cleanRecord(store, r)).filter(Boolean);
+  S.recs = ok('dishes', recs);
+  S.logs = ok('logs', logs);
+  S.plan = Object.fromEntries(ok('plan', plan).map((p) => [p.id, p.dishes]));
+  S.shop = ok('shop', shop);
+  const kv = kvRaw.map(cleanKv).filter(Boolean);
   const st = kv.find((k) => k.id === 'settings');
   S.settings = { ...DEFAULTS, ...(st ? st.value : {}) };
   S.settings.filter = { ...DEFAULT_FILTER, ...(S.settings.filter || {}) };
@@ -304,7 +308,7 @@ const fmtMin = (m) => (m >= 60 ? `${Math.floor(m / 60)} 小时${m % 60 ? ` ${m %
 function plate(d, size, noPhoto) {
   const st = S.stats[d.id];
   const ph = !noPhoto && (d.photo || (st && st.photo));
-  return `<span class="plate ${size || ''}" style="--c:${cuis(d).color}">${ph ? `<img src="${ph}" alt="">` : `<i>${esc(d.emoji || '🍽️')}</i>`}</span>`;
+  return `<span class="plate ${size || ''}" style="--c:${cuis(d).color}">${ph ? `<img src="${esc(ph)}" alt="">` : `<i>${esc(d.emoji || '🍽️')}</i>`}</span>`;
 }
 const metaTags = (d) => `<div class="tags"><span class="tag cz" style="--c:${cuis(d).color}">${cuis(d).emoji} ${cuis(d).name}</span><span class="tag">${typ(d).emoji} ${typ(d).name}</span><span class="tag">⏱ ${fmtMin(d.time)}</span><span class="tag">${LEVELS[d.level] || '新手友好'}</span>${d.taste === 'light' ? '<span class="tag lt">🥗 清淡</span>' : d.taste === 'heavy' ? '<span class="tag hv">🔥 重口</span>' : ''}</div>`;
 function noteBox(d) {
@@ -319,7 +323,7 @@ function cookedLine(d) {
 }
 const srcIcon = (s) => ({ xhs: '📕', yt: '▶️', xcf: '🍳' }[s] || '🔗');
 const recipeBtns = (d) => `<a class="btn xhs" href="${xhsApp(searchQ(d))}">📕 小红书看做法</a>`;
-const myLinkBtn = (d) => (d.links.length ? `<a class="btn mine block" href="${esc(d.links[0].url)}" target="_blank" rel="noopener">📌 打开我收藏的做法${d.links[0].title ? `：${esc(d.links[0].title)}` : ''}</a>` : '');
+const myLinkBtn = (d) => (d.links.length ? `<a class="btn mine block" href="${esc(safeUrl(d.links[0].url) || '#')}" target="_blank" rel="noopener">📌 打开我收藏的做法${d.links[0].title ? `：${esc(d.links[0].title)}` : ''}</a>` : '');
 
 /** Little reminders: garlic can be left out; something has to come from the Asian grocer. */
 function needHints(d) {
@@ -337,14 +341,14 @@ function emptyPlate(emoji, text) {
 
 function resultCard(d, extra) {
   return `<div class="result card pop">
-    <a class="rhead" href="#dish/${d.id}">${plate(d, 'xl')}<h2>${esc(d.name)}</h2>${d.en ? `<div class="en">${esc(d.en)}</div>` : ''}</a>
+    <a class="rhead" href="#dish/${esc(d.id)}">${plate(d, 'xl')}<h2>${esc(d.name)}</h2>${d.en ? `<div class="en">${esc(d.en)}</div>` : ''}</a>
     ${metaTags(d)}
     <p class="cooked">${cookedLine(d)}</p>
     ${extra || ''}${noteBox(d)}${needHints(d)}
     ${S.ui.relaxed && S.ui.mode === 'one' ? '<p class="hint">符合条件的菜最近都做过了，这道是从里面挑的</p>' : ''}
-    <div class="btns two">${recipeBtns(d)}<button class="btn primary" data-act="choose" data-id="${d.id}">👍 就它了</button></div>
+    <div class="btns two">${recipeBtns(d)}<button class="btn primary" data-act="choose" data-id="${esc(d.id)}">👍 就它了</button></div>
     ${myLinkBtn(d)}
-    <div class="btns center"><button class="btn ghost sm" data-act="nope" data-id="${d.id}">🙅 不想吃这个</button><a class="btn ghost sm" href="#dish/${d.id}">详情 ›</a></div>
+    <div class="btns center"><button class="btn ghost sm" data-act="nope" data-id="${esc(d.id)}">🙅 不想吃这个</button><a class="btn ghost sm" href="#dish/${esc(d.id)}">详情 ›</a></div>
   </div>`;
 }
 
@@ -353,13 +357,13 @@ function comboCard(c) {
   const rows = slots.map((k) => {
     const d = c.slots[k] && dishById(c.slots[k]);
     if (!d) return `<div class="crow"><span class="plate md"><i>${SLOTS[k].emoji}</i></span><div class="grow"><small>${SLOTS[k].name}</small><b class="muted">没有合适的</b></div><button class="btn round soft sm" data-act="combo-reroll" data-k="${k}" aria-label="换一道">↻</button></div>`;
-    return `<div class="crow"><a class="cmain" href="#dish/${d.id}">${plate(d, 'md')}<div class="grow"><small>${SLOTS[k].name} · ${d.time} 分钟</small><b>${esc(d.name)}</b>${S.stats[d.id] && S.stats[d.id].lastNote ? `<span class="cnote">📝 ${esc(S.stats[d.id].lastNote.text)}</span>` : ''}</div></a>
+    return `<div class="crow"><a class="cmain" href="#dish/${esc(d.id)}">${plate(d, 'md')}<div class="grow"><small>${SLOTS[k].name} · ${d.time} 分钟</small><b>${esc(d.name)}</b>${S.stats[d.id] && S.stats[d.id].lastNote ? `<span class="cnote">📝 ${esc(S.stats[d.id].lastNote.text)}</span>` : ''}</div></a>
       <a class="btn round xhs sm" href="${xhsApp(searchQ(d))}" aria-label="小红书看做法">📕</a><button class="btn round soft sm" data-act="combo-reroll" data-k="${k}" aria-label="换一道">↻</button></div>`;
   }).join('');
   const ids = comboIds(c);
   const total = ids.reduce((s, id) => s + ((dishById(id) || {}).time || 0), 0);
   return `<div class="card combo pop"><div class="chead"><b>🍱 今晚两道菜</b><span class="muted sm">合计约 ${fmtMin(total)}</span></div>${rows}
-    <div class="btns two"><button class="btn primary" data-act="choose-combo">👍 就这些</button><button class="btn soft" data-act="shop-dishes" data-ids="${ids.join(',')}">🛒 买食材</button></div></div>`;
+    <div class="btns two"><button class="btn primary" data-act="choose-combo">👍 就这些</button><button class="btn soft" data-act="shop-dishes" data-ids="${esc(ids.join(','))}">🛒 买食材</button></div></div>`;
 }
 
 // Picked 虾 or 鱼 in the fridge → seafood is clearly fine this time.
@@ -375,7 +379,7 @@ function fridgeStage() {
     ${pick ? resultCard(pick.dish, fx(pick)) : ''}
     ${ms.length ? `<button class="btn primary huge block" data-act="fridge-pick">🎲 从能做的 ${ms.length} 道里挑一道</button>` : ''}
     <h3 class="sec">能做的菜 <span class="count">${ms.length}</span></h3>
-    ${ms.length ? ms.slice(0, 15).map((m) => `<a class="mrow card" href="#dish/${m.dish.id}">${plate(m.dish, 'sm')}<div class="grow"><b>${esc(m.dish.name)}</b><small class="muted">${m.dish.time} 分钟 · ${typ(m.dish).name}</small>${fx(m)}</div></a>`).join('') : '<div class="card muted center">这些食材还配不出菜，多选几样试试</div>'}`;
+    ${ms.length ? ms.slice(0, 15).map((m) => `<a class="mrow card" href="#dish/${esc(m.dish.id)}">${plate(m.dish, 'sm')}<div class="grow"><b>${esc(m.dish.name)}</b><small class="muted">${m.dish.time} 分钟 · ${typ(m.dish).name}</small>${fx(m)}</div></a>`).join('') : '<div class="card muted center">这些食材还配不出菜，多选几样试试</div>'}`;
 }
 
 function stage() {
@@ -413,12 +417,12 @@ function filterSummary(f) {
 
 function logRow(l, inDish) {
   const d = dishById(l.dishId) || { id: '', name: '已删除的菜', emoji: '🍽️', cuisine: 'cn' };
-  return `<div class="lrow card" data-act="log-edit" data-id="${l.id}" role="button" tabindex="0">
+  return `<div class="lrow card" data-act="log-edit" data-id="${esc(l.id)}" role="button" tabindex="0">
     ${inDish ? '' : plate(d, 'sm', !!l.photo)}
     <div class="grow"><div class="lt"><b>${inDish ? fmtDate(l.date) : esc(d.name)}</b>${l.rating ? `<span class="stars">${stars(l.rating)}</span>` : ''}</div>
     <div class="muted sm">${inDish ? relDays(l.date, today()) : `${fmtDate(l.date)} · ${relDays(l.date, today())}`}${l.by ? ` · 👤 ${esc(l.by)}` : ''}</div>
     ${l.note ? `<p class="lnote">📝 ${esc(l.note)}</p>` : ''}</div>
-    ${l.photo ? `<img class="lph" src="${l.photo}" alt="">` : ''}
+    ${l.photo ? `<img class="lph" src="${esc(l.photo)}" alt="">` : ''}
   </div>`;
 }
 
@@ -427,9 +431,9 @@ function tonightCard(list) {
   const done = new Set(S.logs.filter((l) => l.date === t).map((l) => l.dishId));
   return `<section class="card tonight">
     <div class="thead"><b>🍽 今晚菜单</b><a class="link" href="#plan">改菜单 ›</a></div>
-    ${list.map((d) => `<div class="trow"><a class="tmain" href="#dish/${d.id}">${plate(d, 'sm')}<span class="grow"><b>${esc(d.name)}</b><small>${d.time} 分钟${S.stats[d.id] && S.stats[d.id].lastNote ? ' · 📝 有笔记' : ''}</small></span></a>
-      ${done.has(d.id) ? '<span class="tag green">✓ 已记录</span>' : `<a class="btn round xhs sm" href="${xhsApp(searchQ(d))}" aria-label="小红书看做法">📕</a><button class="btn primary sm" data-act="log-new" data-id="${d.id}">做好了</button>`}</div>`).join('')}
-    <button class="btn soft sm block" data-act="shop-dishes" data-ids="${list.map((d) => d.id).join(',')}">🛒 把食材加进购物清单</button>
+    ${list.map((d) => `<div class="trow"><a class="tmain" href="#dish/${esc(d.id)}">${plate(d, 'sm')}<span class="grow"><b>${esc(d.name)}</b><small>${d.time} 分钟${S.stats[d.id] && S.stats[d.id].lastNote ? ' · 📝 有笔记' : ''}</small></span></a>
+      ${done.has(d.id) ? '<span class="tag green">✓ 已记录</span>' : `<a class="btn round xhs sm" href="${xhsApp(searchQ(d))}" aria-label="小红书看做法">📕</a><button class="btn primary sm" data-act="log-new" data-id="${esc(d.id)}">做好了</button>`}</div>`).join('')}
+    <button class="btn soft sm block" data-act="shop-dishes" data-ids="${esc(list.map((d) => d.id).join(','))}">🛒 把食材加进购物清单</button>
   </section>`;
 }
 
@@ -480,15 +484,15 @@ function libGrid() {
   if (!list.length) return `<div class="empty">${S.ui.lib.q ? '没找到这道菜' : S.ui.lib.chip === 'more' ? '推荐的新菜都加进菜谱了 🎉' : '这里还是空的'}<br><button class="btn primary" data-act="dish-new">＋ 添加我的菜</button></div>`;
   return `<p class="muted sm">${list.length} 道${S.ui.lib.chip === 'more' ? ' · 点「＋」加进菜谱，之后就会抽到' : ''}</p><div class="grid">${list.map((d) => {
     const st = S.stats[d.id];
-    return `<div class="dwrap"><a class="dcard ${d.hidden ? 'dim' : ''}" href="#dish/${d.id}">${d.fav ? '<span class="heart">❤️</span>' : ''}${plate(d, 'lg')}<b>${esc(d.name)}</b><small>${d.taste === 'light' ? '🥗 ' : d.taste === 'heavy' ? '🔥 ' : ''}${typ(d).name} · ${d.time} 分钟</small>${st ? `<span class="badge">做过 ${st.count} 次</span>` : ''}</a>${d.pending ? `<button class="dadd" data-act="extra-add" data-id="${d.id}" aria-label="加进菜谱">＋</button>` : ''}</div>`;
+    return `<div class="dwrap"><a class="dcard ${d.hidden ? 'dim' : ''}" href="#dish/${esc(d.id)}">${d.fav ? '<span class="heart">❤️</span>' : ''}${plate(d, 'lg')}<b>${esc(d.name)}</b><small>${d.taste === 'light' ? '🥗 ' : d.taste === 'heavy' ? '🔥 ' : ''}${typ(d).name} · ${d.time} 分钟</small>${st ? `<span class="badge">做过 ${st.count} 次</span>` : ''}</a>${d.pending ? `<button class="dadd" data-act="extra-add" data-id="${esc(d.id)}" aria-label="加进菜谱">＋</button>` : ''}</div>`;
   }).join('')}</div>`;
 }
 function newCard() {
   const list = weekNew();
   if (!list.length) return '';
   return `<section class="card newcard"><div class="thead"><b>✨ 本周新菜推荐</b><button class="link" data-act="lib-chip" data-v="more">看全部 ${S.pending.length} 道 ›</button></div>
-    ${list.map((d) => `<div class="trow"><a class="tmain" href="#dish/${d.id}">${plate(d, 'sm')}<span class="grow"><b>${esc(d.name)}</b><small>${d.taste === 'light' ? '🥗 清淡 · ' : ''}${typ(d).name} · ${d.time} 分钟</small></span></a>
-      <button class="btn primary sm" data-act="extra-add" data-id="${d.id}">＋ 加入</button><button class="x" data-act="extra-no" data-id="${d.id}" aria-label="不感兴趣">✕</button></div>`).join('')}
+    ${list.map((d) => `<div class="trow"><a class="tmain" href="#dish/${esc(d.id)}">${plate(d, 'sm')}<span class="grow"><b>${esc(d.name)}</b><small>${d.taste === 'light' ? '🥗 清淡 · ' : ''}${typ(d).name} · ${d.time} 分钟</small></span></a>
+      <button class="btn primary sm" data-act="extra-add" data-id="${esc(d.id)}">＋ 加入</button><button class="x" data-act="extra-no" data-id="${esc(d.id)}" aria-label="不感兴趣">✕</button></div>`).join('')}
     <p class="muted xs">每周一按你的口味换一批 · 点 ✕ 就不再推荐</p></section>`;
 }
 function Dishes() {
@@ -515,23 +519,23 @@ function DishPage(id) {
   const ing = (i) => { const w = whereToBuy(i); return `<span class="ing">${esc(i)}${w ? `<small>${esc(w.en)}${w.cheaper ? ' · 亚洲超市更便宜' : ''}</small>` : ''}</span>`; };
   const g = garlicOf(d);
   return `
-  <div class="bar"><button class="back" data-act="back" aria-label="返回">‹</button><b>${esc(d.name)}</b>${d.pending ? '<span></span>' : `<button class="btn ghost sm" data-act="edit-dish" data-id="${d.id}">编辑</button>`}</div>
-  ${d.pending ? `<div class="card newbanner"><p>✨ 这是推荐的新菜，还没加进你的菜谱</p><button class="btn primary sm" data-act="extra-add" data-id="${d.id}">＋ 加进菜谱</button></div>` : ''}
-  <section class="dhero"><button class="hero-ph" data-act="cover" data-id="${d.id}" aria-label="换封面照片">${plate(d, 'xxl')}<span class="cam">📷</span></button><h1>${esc(d.name)}</h1>${d.en ? `<div class="en">${esc(d.en)}</div>` : ''}${metaTags(d)}</section>
+  <div class="bar"><button class="back" data-act="back" aria-label="返回">‹</button><b>${esc(d.name)}</b>${d.pending ? '<span></span>' : `<button class="btn ghost sm" data-act="edit-dish" data-id="${esc(d.id)}">编辑</button>`}</div>
+  ${d.pending ? `<div class="card newbanner"><p>✨ 这是推荐的新菜，还没加进你的菜谱</p><button class="btn primary sm" data-act="extra-add" data-id="${esc(d.id)}">＋ 加进菜谱</button></div>` : ''}
+  <section class="dhero"><button class="hero-ph" data-act="cover" data-id="${esc(d.id)}" aria-label="换封面照片">${plate(d, 'xxl')}<span class="cam">📷</span></button><h1>${esc(d.name)}</h1>${d.en ? `<div class="en">${esc(d.en)}</div>` : ''}${metaTags(d)}</section>
   <div class="stats3"><div><b>${st ? st.count : 0}</b><span>做过（次）</span></div><div><b>${st && st.rated ? st.avg.toFixed(1) : '–'}</b><span>平均评分</span></div><div><b>${st ? relDays(st.last, today()) : '–'}</b><span>上次做</span></div></div>
   ${noteBox(d)}
-  <div class="btns two">${recipeBtns(d)}<button class="btn primary" data-act="log-new" data-id="${d.id}">✅ 我做了</button></div>
+  <div class="btns two">${recipeBtns(d)}<button class="btn primary" data-act="log-new" data-id="${esc(d.id)}">✅ 我做了</button></div>
   ${myLinkBtn(d)}
   <div class="acts">
-    <button class="${d.fav ? 'on' : ''}" data-act="fav" data-id="${d.id}"><span>${d.fav ? '❤️' : '🤍'}</span>${d.fav ? '已收藏' : '收藏'}</button>
-    <button data-act="to-plan" data-id="${d.id}"><span>📅</span>加入菜单</button>
-    <button data-act="shop-dishes" data-ids="${d.id}"><span>🛒</span>买食材</button>
-    <button class="${d.hidden ? 'on' : ''}" data-act="hide" data-id="${d.id}"><span>${d.hidden ? '🙈' : '🚫'}</span>${d.hidden ? '已不抽它' : '别抽到它'}</button>
+    <button class="${d.fav ? 'on' : ''}" data-act="fav" data-id="${esc(d.id)}"><span>${d.fav ? '❤️' : '🤍'}</span>${d.fav ? '已收藏' : '收藏'}</button>
+    <button data-act="to-plan" data-id="${esc(d.id)}"><span>📅</span>加入菜单</button>
+    <button data-act="shop-dishes" data-ids="${esc(d.id)}"><span>🛒</span>买食材</button>
+    <button class="${d.hidden ? 'on' : ''}" data-act="hide" data-id="${esc(d.id)}"><span>${d.hidden ? '🙈' : '🚫'}</span>${d.hidden ? '已不抽它' : '别抽到它'}</button>
   </div>
   <section class="card"><h3>📌 我收藏的做法</h3>
-    ${d.links.length ? d.links.map((l, i) => `<div class="link-row"><a href="${esc(l.url)}" target="_blank" rel="noopener"><span>${srcIcon(l.src)}</span><span class="lt">${esc(l.title || l.url)}</span></a><button class="x" data-act="link-del" data-id="${d.id}" data-i="${i}" aria-label="删除这个链接">✕</button></div>`).join('')
+    ${d.links.length ? d.links.map((l, i) => `<div class="link-row"><a href="${esc(safeUrl(l.url) || '#')}" target="_blank" rel="noopener"><span>${srcIcon(l.src)}</span><span class="lt">${esc(l.title || l.url)}</span></a><button class="x" data-act="link-del" data-id="${esc(d.id)}" data-i="${i}" aria-label="删除这个链接">✕</button></div>`).join('')
       : '<p class="muted sm">在小红书找到好用的做法？点笔记右上角「分享 → 复制链接」，回来这里粘贴，下次一点就打开。</p>'}
-    <button class="btn soft block" data-act="link-add" data-id="${d.id}">＋ 粘贴做法链接</button>
+    <button class="btn soft block" data-act="link-add" data-id="${esc(d.id)}">＋ 粘贴做法链接</button>
   </section>
   <section class="card"><h3>🧺 食材 · 去哪买</h3>
     ${shopG.map(([k, l]) => `<div class="ingrp"><div class="sname">${STORES[k].emoji} ${STORES[k].name}</div><div class="ings">${l.map(ing).join('')}</div></div>`).join('') || (pantry.length ? '' : '<span class="muted sm">还没填食材</span>')}
@@ -553,8 +557,8 @@ function Plan() {
     const w = whereToBuy(x.name);
     const sub = [w ? w.en : '', w && w.cheaper && !x.done ? '亚洲超市更便宜' : '', x.for && x.for.length ? x.for.join('、') : ''].filter(Boolean).join(' · ');
     // The whole row is one big button (easy to hit with a thumb in the supermarket); ✕ is separate.
-    return `<div class="sitem ${x.done ? 'done' : ''}"><button class="stog" data-act="shop-toggle" data-id="${x.id}" aria-pressed="${x.done ? 'true' : 'false'}"><span class="check" aria-hidden="true">${x.done ? '✓' : ''}</span>
-    <span class="grow"><span>${esc(x.name)}</span>${sub ? `<small>${esc(sub)}</small>` : ''}</span></button><button class="x" data-act="shop-del" data-id="${x.id}" aria-label="删除 ${esc(x.name)}">✕</button></div>`;
+    return `<div class="sitem ${x.done ? 'done' : ''}"><button class="stog" data-act="shop-toggle" data-id="${esc(x.id)}" aria-pressed="${x.done ? 'true' : 'false'}"><span class="check" aria-hidden="true">${x.done ? '✓' : ''}</span>
+    <span class="grow"><span>${esc(x.name)}</span>${sub ? `<small>${esc(sub)}</small>` : ''}</span></button><button class="x" data-act="shop-del" data-id="${esc(x.id)}" aria-label="删除 ${esc(x.name)}">✕</button></div>`;
   };
   const byStore = STORE_ORDER.map((k) => [k, left.filter((x) => storeOf(x.name) === k)]).filter(([, l]) => l.length);
   return `
@@ -564,7 +568,7 @@ function Plan() {
     const ids = S.plan[date] || [];
     const temp = date >= t ? tempOn(date) : undefined;
     return `<div class="day ${date === t ? 'today' : ''} ${date < t ? 'past' : ''}"><div class="dl"><b>${weekday(date)}</b><span>${parseDate(date).getDate()}</span>${temp !== undefined ? `<em class="${isCold(temp) ? 'cold' : ''}">${isCold(temp) ? '🥶' : ''}${temp}°</em>` : ''}</div>
-      <div class="db">${ids.map((id) => { const d = dishById(id); return d ? `<span class="pchip"><a href="#dish/${d.id}">${esc(d.emoji)} ${esc(d.name)}</a><button data-act="plan-rm" data-date="${date}" data-id="${d.id}" aria-label="移除">✕</button></span>` : ''; }).join('')}
+      <div class="db">${ids.map((id) => { const d = dishById(id); return d ? `<span class="pchip"><a href="#dish/${esc(d.id)}">${esc(d.emoji)} ${esc(d.name)}</a><button data-act="plan-rm" data-date="${date}" data-id="${esc(d.id)}" aria-label="移除">✕</button></span>` : ''; }).join('')}
       <button class="padd" data-act="plan-add" data-date="${date}" aria-label="安排">＋${ids.length ? '' : ' 安排'}</button></div></div>`;
   }).join('')}</div>
   <div class="btns two"><button class="btn soft" data-act="fill-week">🎲 空的日子帮我排</button><button class="btn soft" data-act="shop-week">🛒 生成购物清单</button></div>
@@ -616,7 +620,7 @@ function analysisCard() {
   const max = a.ings.length ? a.ings[0].count : 1;
   const ts = tasteSummary(S.prefs);
   const miss = missYou(S.stats, t);
-  const row = (d, right, sub) => `<a class="rank" href="#dish/${d.id}">${plate(d, 'sm')}<span class="grow"><b>${esc(d.name)}</b><small>${sub}</small></span><span class="times">${right}</span></a>`;
+  const row = (d, right, sub) => `<a class="rank" href="#dish/${esc(d.id)}">${plate(d, 'sm')}<span class="grow"><b>${esc(d.name)}</b><small>${sub}</small></span><span class="times">${right}</span></a>`;
   return `${head}<section class="card ana">
     <p class="big">做了 <b>${a.n}</b> 次 · <b>${a.distinct}</b> 道不同的菜${a.avg ? ` · 平均 <b>★ ${a.avg.toFixed(1)}</b>` : ''}</p>
     <h4>🏆 常做的菜</h4>${a.dishes.map((x) => { const d = dishById(x.k); const s = S.stats[x.k]; return d ? row(d, `${x.count} 次`, `${s && s.rated ? `★ ${s.avg.toFixed(1)} · ` : ''}上次 ${s ? relDays(s.last, t) : ''}`) : ''; }).join('')}
@@ -654,14 +658,16 @@ function Me() {
       <div class="btns two"><button class="btn soft" data-act="sync-now">🔄 立即同步</button><button class="btn ghost" data-act="sync-leave">停止同步</button></div>`
     : `<p class="muted sm">两个人一起用：一人记录、排菜单或加购物清单，另一人的 App 也会自动更新。</p>
       <div class="btns two"><button class="btn primary" data-act="sync-create">开启同步</button><button class="btn soft" data-act="sync-join">我有同步码</button></div>
-      <p class="muted xs">第一台手机点「开启同步」，把同步码发给对方；对方点「我有同步码」输入。两人原有的资料会合在一起。资料存在你自己的 Google Drive（不公开）。</p>`}
+      <p class="muted xs">第一台手机点「开启同步」，把同步码发给对方；对方点「我有同步码」输入。两人原有的资料会合在一起。</p>`}
+    <p class="muted xs privacy">🔒 开启同步后，菜谱、做菜记录（含照片和名字）、菜单和购物清单会上传到 <b>App 作者的 Google Drive</b>，只用来在两台手机之间同步，不公开、不做别的用途；作者技术上看得到这些资料。停止同步不会删除云端的那份，想删除请联系 App 作者。</p>
     <label class="srow"><span class="grow">我的名字<small>记录里会写是谁做的</small></span><input type="text" class="sel name-in" data-set="name" maxlength="8" placeholder="比如 YC" value="${esc(s.name || '')}"></label>
   </section>
-  <section class="card"><h3>💾 资料</h3><p class="muted sm">所有资料只存在这台手机上。换手机或清除 Safari 资料前，记得先导出备份。</p>
+  <section class="card"><h3>💾 资料</h3><p class="muted sm">${Sync.status.on ? '资料存在这台手机上，同步的那份在 App 作者的 Google Drive。' : '所有资料只存在这台手机上。'}换手机或清除 Safari 资料前，记得先导出备份。</p>
     <div class="btns"><button class="btn soft" data-act="export">📤 导出备份</button><button class="btn soft" data-act="import">📥 导入备份</button></div>
     <div class="btns"><button class="btn ghost danger-t" data-act="wipe">🗑 清空所有资料</button></div>
   </section>
   <section class="card"><h3>📲 装到 iPhone 主屏幕</h3><ol class="steps"><li>用 <b>Safari</b> 打开这个网页</li><li>点下方的 <b>Share</b> 按钮（方框加箭头）</li><li>往下滑，点 <b>Add to Home Screen</b> → <b>Add</b></li></ol><p class="muted sm">之后从主屏幕图标打开，就像普通 App 一样，没网也能用。</p></section>
+  <p class="muted xs notice">菜谱标签（清淡、少油少盐、无海鲜、不用蒜等）仅供参考，不是营养或医疗建议；有食物过敏、慢性病或怀孕，请自己核对食材。本 App 与小红书没有关联，📕 按钮只是帮你打开搜索。</p>
   <p class="about">今晚吃啥 v${VERSION} · ${S.dishes.length} 道菜 · ${S.logs.length} 条记录</p>`;
 }
 
@@ -706,7 +712,7 @@ function logSheet(dishId, logId, date) {
   const old = logId && S.logs.find((l) => l.id === logId);
   const d = dishById(old ? old.dishId : dishId) || { id: '', name: '已删除的菜', emoji: '🍽️', cuisine: 'cn' };
   const st = { rating: old ? old.rating || 0 : 0, photo: old ? old.photo || null : null };
-  const photoRow = () => `${st.photo ? `<div class="ph"><img src="${st.photo}" alt=""><button type="button" class="x" data-rmphoto aria-label="删除照片">✕</button></div>` : ''}<button type="button" class="btn soft sm" data-photo>📷 ${st.photo ? '换一张' : '加照片'}</button>`;
+  const photoRow = () => `${st.photo ? `<div class="ph"><img src="${esc(st.photo)}" alt=""><button type="button" class="x" data-rmphoto aria-label="删除照片">✕</button></div>` : ''}<button type="button" class="btn soft sm" data-photo>📷 ${st.photo ? '换一张' : '加照片'}</button>`;
   const html = `
     <div class="lhead">${plate(d, 'md')}<div class="grow"><b>${esc(d.name)}</b><div class="muted sm">${d.id ? cookedLine(d) : ''}</div></div></div>
     <label class="field"><span>哪天做的</span><input type="date" name="date" value="${esc(old ? old.date : date || today())}" max="${today()}"></label>
@@ -718,6 +724,8 @@ function logSheet(dishId, logId, date) {
     foot: `${old ? '<button class="btn ghost danger-t" data-del>删除</button>' : '<button class="btn ghost" data-close>取消</button>'}<button class="btn primary grow" data-save>保存</button>`,
   });
   const ta = $('[name=note]', sh.el);
+  const recId = old ? old.id : uid(); // one id per sheet: a double tap on 保存 writes the same record twice, not two records
+  let saving = false;
   sh.el.addEventListener('click', async (e) => {
     const star = e.target.closest('[data-star]');
     if (star) {
@@ -743,10 +751,12 @@ function logSheet(dishId, logId, date) {
       return;
     }
     if (e.target.closest('[data-save]')) {
+      if (saving) return;
       const dateV = $('[name=date]', sh.el).value || today();
       if (dateV > today()) { toast('还没到那天哦'); return; }
-      const log = { id: old ? old.id : uid(), dishId: old ? old.dishId : dishId, date: dateV, rating: st.rating, note: ta.value.trim(), photo: st.photo, createdAt: old ? old.createdAt : Date.now(), by: old ? old.by || '' : S.settings.name || '' };
-      await DB.put('logs', log);
+      saving = true;
+      const log = { id: recId, dishId: old ? old.dishId : dishId, date: dateV, rating: st.rating, note: ta.value.trim(), photo: st.photo, createdAt: old ? old.createdAt : Date.now(), by: old ? old.by || '' : S.settings.name || '' };
+      try { await DB.put('logs', log); } finally { saving = false; }
       if (d.pending) await saveRec(d.id, { added: true, addedAt: Date.now() }); // cooked a suggested dish → it joins the library
       S.logs = [...S.logs.filter((l) => l.id !== log.id), log];
       refresh(); sh.close(); render();
@@ -758,7 +768,7 @@ function logSheet(dishId, logId, date) {
 function dishForm(id) {
   const d = id ? dishById(id) : null;
   const st = { emoji: d ? d.emoji : '🍳', cuisine: d ? d.cuisine : 'cn', type: d ? d.type : 'meat', level: d ? d.level : 1, taste: d ? d.taste || 'normal' : 'light', photo: d ? d.photo || null : null };
-  const photoRow = () => `${st.photo ? `<div class="ph"><img src="${st.photo}" alt=""><button type="button" class="x" data-rmphoto aria-label="删除照片">✕</button></div>` : ''}<button type="button" class="btn soft sm" data-photo>📷 ${st.photo ? '换一张' : '加照片'}</button>`;
+  const photoRow = () => `${st.photo ? `<div class="ph"><img src="${esc(st.photo)}" alt=""><button type="button" class="x" data-rmphoto aria-label="删除照片">✕</button></div>` : ''}<button type="button" class="btn soft sm" data-photo>📷 ${st.photo ? '换一张' : '加照片'}</button>`;
   const rec = d && S.recs.find((r) => r.id === d.id);
   const chips = (k, entries) => `<div class="chips" data-chips="${k}">${entries.map(([v, l]) => `<button type="button" class="chip ${String(st[k]) === String(v) ? 'on' : ''}" data-v="${v}">${l}</button>`).join('')}</div>`;
   const html = `
@@ -773,11 +783,12 @@ function dishForm(id) {
     <label class="field"><span>大概要多久（分钟）</span><input name="time" type="number" inputmode="numeric" min="1" max="600" value="${esc(d ? d.time : 30)}"></label>
     <label class="field"><span>主要食材（空格或逗号分开）</span><textarea name="ings" rows="2" placeholder="鸡腿 土豆 洋葱">${esc(d ? d.ings.join(' ') : '')}</textarea></label>
     ${d ? '' : '<label class="field"><span>做法链接（可选，粘贴小红书分享的文字也行）</span><textarea name="link" rows="2" placeholder="http://xhslink.com/…"></textarea></label>'}
-    <div class="field"><span>成品照片（可选 · 小红书笔记截图也行）</span><div class="photo-row">${photoRow()}</div></div>`;
+    <div class="field"><span>成品照片（可选）</span><div class="photo-row">${photoRow()}</div></div>`;
   let foot = '<button class="btn ghost" data-close>取消</button>';
   if (d && !d.builtin) foot = '<button class="btn ghost danger-t" data-del>删除</button>';
   else if (d && rec && rec.edited) foot = '<button class="btn ghost" data-restore>恢复默认</button>';
   const sh = sheet(d ? '编辑菜' : '添加我的菜', html, { foot: `${foot}<button class="btn primary grow" data-save>保存</button>` });
+  const newId = 'u' + uid();
   const linkIn = $('[name=link]', sh.el);
   if (linkIn) {
     linkIn.addEventListener('input', () => { // pasted a 小红书 share → its title becomes the name if none yet
@@ -827,7 +838,7 @@ function dishForm(id) {
         await saveRec(d.id, !d.builtin ? fields : changed ? { ...fields, edited: true } : { photo: st.photo });
         sh.close(); render(); toast('已保存');
       } else {
-        const nid = 'u' + uid();
+        const nid = newId; // same id on a double tap → one dish, not two
         const link = parseShared(($('[name=link]', sh.el) || {}).value);
         await saveRec(nid, { ...fields, custom: true, createdAt: Date.now(), links: link ? [{ ...link, title: link.title || name, addedAt: Date.now() }] : [] });
         sh.close(); location.hash = `#dish/${nid}`; toast('已添加 🎉');
@@ -844,10 +855,10 @@ function linkSheet(id) {
     <label class="field"><span>给它起个名字（可选）</span><input name="title" maxlength="60" placeholder="${esc(d.name)} · 超简单版"></label>
     <p class="lpreview muted sm"></p>
     <div class="field"><span>📷 顺手加张成品照（可选）</span><div class="photo-row"></div>
-      <p class="muted xs">在小红书笔记里截个图，这里选它，再框出菜的部分，就会变成这道菜的照片</p></div>`;
+      <p class="muted xs">选一张照片，再框出菜的部分，就会变成这道菜的照片</p></div>`;
   const sh = sheet('保存做法链接', html, { foot: '<button class="btn ghost" data-close>取消</button><button class="btn primary grow" data-save>保存</button>' });
   const st = { photo: null };
-  const photoRow = () => `${st.photo ? `<div class="ph"><img src="${st.photo}" alt=""><button type="button" class="x" data-rmphoto aria-label="删除照片">✕</button></div>` : ''}<button type="button" class="btn soft sm" data-photo>📷 ${st.photo ? '换一张' : '选截图 / 照片'}</button>`;
+  const photoRow = () => `${st.photo ? `<div class="ph"><img src="${esc(st.photo)}" alt=""><button type="button" class="x" data-rmphoto aria-label="删除照片">✕</button></div>` : ''}<button type="button" class="btn soft sm" data-photo>📷 ${st.photo ? '换一张' : '选照片'}</button>`;
   $('.photo-row', sh.el).innerHTML = photoRow();
   const ta = $('[name=text]', sh.el);
   const ti = $('[name=title]', sh.el);
@@ -880,7 +891,7 @@ function chooseDish(title, top) {
   return new Promise((resolve) => {
     let picked = false;
     const list = (q) => S.dishes.filter((d) => !q || `${d.name} ${d.en || ''} ${d.ings.join(' ')}`.toLowerCase().includes(q)).slice(0, 50)
-      .map((d) => `<button type="button" class="pitem" data-pick="${d.id}">${plate(d, 'sm')}<span class="grow"><b>${esc(d.name)}</b><small>${cuis(d).name} · ${typ(d).name} · ${d.time} 分钟</small></span></button>`).join('') || '<p class="muted center">没找到，可以去「菜谱」添加</p>';
+      .map((d) => `<button type="button" class="pitem" data-pick="${esc(d.id)}">${plate(d, 'sm')}<span class="grow"><b>${esc(d.name)}</b><small>${cuis(d).name} · ${typ(d).name} · ${d.time} 分钟</small></span></button>`).join('') || '<p class="muted center">没找到，可以去「菜谱」添加</p>';
     const sh = sheet(title, `${top || ''}<div class="search"><span>🔍</span><input type="search" data-q placeholder="搜菜名或食材"></div><div class="plist">${list('')}</div>`, { onClose: () => { if (!picked) resolve(null); } });
     $('[data-q]', sh.el).addEventListener('input', (e) => { $('.plist', sh.el).innerHTML = list(e.target.value.trim().toLowerCase()); });
     sh.el.addEventListener('click', (e) => {
@@ -991,7 +1002,7 @@ const ACTS = {
   },
   async cover({ id }) {
     const d = dishById(id);
-    const sh = sheet(`「${d.name}」的照片`, `<div class="choices"><button class="btn soft block" data-c="pick">📷 选一张照片（小红书截图也行）</button>${d.photo ? '<button class="btn ghost block" data-c="rm">🗑 去掉这张照片</button>' : ''}<p class="muted sm center">没选照片时，会用你最近一次做这道菜拍的照片</p></div>`, { cls: 'small' });
+    const sh = sheet(`「${d.name}」的照片`, `<div class="choices"><button class="btn soft block" data-c="pick">📷 选一张照片</button>${d.photo ? '<button class="btn ghost block" data-c="rm">🗑 去掉这张照片</button>' : ''}<p class="muted sm center">没选照片时，会用你最近一次做这道菜拍的照片</p></div>`, { cls: 'small' });
     sh.el.addEventListener('click', async (e) => {
       const b = e.target.closest('[data-c]');
       if (!b) return;
@@ -1128,7 +1139,7 @@ const ACTS = {
   },
   'logs-all': () => { S.ui.allLogs = true; render(); },
   async 'sync-create'() {
-    if (!(await ask('开启两人同步？', '会生成一个同步码，这台手机的资料会上传。把同步码发给对方，对方输入后就会一起同步。', '开启'))) return;
+    if (!(await ask('开启两人同步？', '会生成一个同步码。这台手机的菜谱、记录（含照片和名字）、菜单和购物清单会上传到 App 作者的 Google Drive，作者技术上看得到。把同步码发给对方，对方输入后就会一起同步。同步码只发给自己人，别发到群里。', '开启'))) return;
     toast('正在开启…');
     try { await Sync.create(); } catch (e) { toast('开启失败：' + e.message); return; }
     render();
@@ -1150,7 +1161,7 @@ const ACTS = {
   'sync-share': () => showCode(),
   'sync-now': () => { Sync.syncNow(); },
   async 'sync-leave'() {
-    if (!(await ask('停止同步？', '这台手机不再和对方同步，资料会留在这台手机上。以后可以重新输入同步码加入。', '停止同步', true))) return;
+    if (!(await ask('停止同步？', '这台手机不再和对方同步，资料会留在这台手机上。云端（App 作者的 Google Drive）的那份不会删除，想删请联系 App 作者。以后可以重新输入同步码加入。', '停止同步', true))) return;
     await Sync.leave(); render(); toast('已停止同步');
   },
   async 'install-hide'() { S.settings.hideInstall = true; await saveSettings(); render(); },
@@ -1183,7 +1194,7 @@ const ACTS = {
     await load(); render(); toast('导入好了 ✓');
   },
   async wipe() {
-    if (!(await ask('清空所有资料？', Sync.status.on ? '只清空这台手机，并停止同步；另一台手机和同步里的资料不受影响。之后重新输入同步码就能拿回来。' : '记录、菜单、购物清单、自己加的菜和收藏都会删掉，没法恢复。建议先导出备份。', '全部清空', true))) return;
+    if (!(await ask('清空所有资料？', Sync.status.on ? '只清空这台手机，并停止同步；另一台手机和云端（App 作者的 Google Drive）的资料都还在。之后重新输入同步码就能拿回来。' : '记录、菜单、购物清单、自己加的菜和收藏都会删掉，没法恢复。建议先导出备份。', '全部清空', true))) return;
     if (Sync.status.on) await Sync.leave();
     await DB.wipe();
     S.ui.result = null; S.ui.combo = null;

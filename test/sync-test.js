@@ -116,14 +116,43 @@ try {
   await A.until('window.__dinner.S.logs.length === 2 && document.querySelectorAll(".lrow").length === 2', 'A\'s screen redraws', WAIT);
   ok('a record made on B shows up on A\'s open screen');
 
+  // Someone else with the code sends junk straight to the server: a record whose photo the server doesn't have,
+  // a photo that is really an attack, a record with a booby-trapped id, then a normal item. A must still get the
+  // normal item (one bad photo doesn't stop the sync) and nothing from the junk may run as code.
+  const trap = 'window.__pwned = 1';
+  const raw = code.replace(/-/g, '');
+  fake.post({ fn: 'photo-put', code: raw, id: 'bad0bad0bad0bad0bad0bad0bad0bad0', data: `data:image/x" onerror="${trap}` });
+  const at = Date.now();
+  const r = fake.post({ fn: 'push', code: raw, items: [
+    { store: 'logs', id: 'lost-photo', at, rec: { id: 'lost-photo', dishId: 'steak', date: T, rating: 3, photo: 'ph:0123456789abcdef0123456789abcdef' } },
+    { store: 'dishes', id: 'evil1', at, rec: { id: 'evil1', custom: true, name: `<img src=x onerror="${trap}">`, photo: 'ph:bad0bad0bad0bad0bad0bad0bad0bad0', links: [{ url: `javascript:${trap}` }] } },
+    { store: 'logs', id: `x" onmouseover="${trap}`, at, rec: { id: `x" onmouseover="${trap}`, dishId: 'steak', date: T } },
+    { store: 'shop', id: 'after-junk', at, rec: { id: 'after-junk', name: '酱油膏', done: false, for: [] } },
+  ] });
+  assert.equal(r.accepted, 4, 'the old server takes anything (S1/N2 not fixed yet)');
+  await A.until('window.__dinner.S.shop.some((x) => x.id === "after-junk")', 'A got the normal item after the junk', WAIT);
+  const lost = await S(A, 'S.logs.find((l) => l.id === "lost-photo")');
+  assert.ok(lost && !lost.photo, 'record kept, missing photo skipped');
+  const ev = await S(A, 'S.dishes.find((d) => d.id === "evil1")');
+  assert.ok(ev && !ev.photo && ev.links.length === 0, 'fake photo and javascript: link dropped');
+  assert.ok(!(await S(A, 'S.logs.some((l) => l.id.includes("onmouseover"))')), 'bad id dropped');
+  for (const h of ['#log', '#dish/evil1', '#dishes']) {
+    await go(A, h);
+    assert.equal(await A.js('document.querySelectorAll("[onerror],[onmouseover],a[href^=javascript]").length'), 0, 'no injected handlers on ' + h);
+  }
+  await sleep(300);
+  assert.equal(await A.js('window.__pwned'), undefined, 'no injected code ran');
+  ok('junk from the server: missing photo skipped (sync goes on), bad photo / id / link dropped, nothing runs');
+
   // B stops syncing: its data stays, A is not affected
   await go(B, '#me');
   await B.tap('[data-act=sync-leave]');
   await B.tap('[data-ok]');
   await B.until('!window.__dinner.Sync.status.on && document.querySelector("[data-act=sync-create]")', 'left');
-  assert.equal(await S(B, 'S.logs.length'), 2);
+  const bLogs = await S(B, 'S.logs.length');
   await sleep(300);
-  assert.equal(await S(A, 'S.logs.length'), 2);
+  assert.equal(await S(B, 'S.logs.length'), bLogs, 'B keeps its records');
+  assert.equal(await S(A, 'S.logs.length'), 3, 'A keeps its two + the one from the junk step');
   ok('停止同步 on B keeps its data and leaves A alone');
 
   assert.deepEqual([...A.errors, ...B.errors], [], 'console errors');

@@ -273,6 +273,8 @@ p { margin: 6px 0; }
 .switch:checked::after { left: 23px; }
 .steps { margin: 0; padding-left: 20px; line-height: 1.9; }
 .about { text-align: center; color: var(--muted); font-size: 12px; margin: 20px 0; }
+.notice { margin: 18px 4px 0; line-height: 1.6; }
+.privacy { margin: 8px 0 0; padding: 8px 10px; border-radius: 10px; background: var(--soft, rgba(0, 0, 0, .04)); line-height: 1.6; }
 
 /* ---- bottom tabs ---- */
 .tabs { position: fixed; left: 0; right: 0; bottom: 0; z-index: 20; display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); padding: 6px 8px calc(env(safe-area-inset-bottom) + 6px); background: color-mix(in srgb, var(--card) 88%, transparent); backdrop-filter: blur(16px); -webkit-backdrop-filter: blur(16px); border-top: 1px solid var(--line); }

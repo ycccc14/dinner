@@ -371,4 +371,41 @@ test('口味: every dish is tagged; everyday default = light, beginner-friendly 
   assert.ok(te > 2100 && te < 2500, 'light ≈ 1.3:1, got ' + te);
 });
 
+test('data from sync / backups is checked (no script injection)', () => {
+  const trap = 'x" onerror="alert(1)';
+  // ids
+  assert.ok(L.safeId('tomato-egg') && L.safeId('u1abc') && L.safeId('2026-11-25') && L.safeId(12));
+  assert.ok(!L.safeId(trap) && !L.safeId('') && !L.safeId('a b') && !L.safeId({}) && !L.safeId(NaN));
+  // photos and links
+  assert.equal(L.safePhoto('data:image/jpeg;base64,/9j/4AAQSkZJRg=='), 'data:image/jpeg;base64,/9j/4AAQSkZJRg==');
+  for (const p of [trap, 'javascript:alert(1)', 'data:text/html;base64,PHNjcmlwdD4=', 'data:image/svg+xml;base64,PHN2Zz4=', 'data:image/png;base64,AA"onerror', 42]) assert.equal(L.safePhoto(p), null, String(p));
+  assert.equal(L.safeUrl('https://xhslink.com/a/Ab1'), 'https://xhslink.com/a/Ab1');
+  for (const u of ['javascript:alert(1)', 'JAVASCRIPT:alert(1)', ' https://x.com', 'https://x.com/"onclick', 'data:text/html,hi', 'xhsdiscover://x', null]) assert.equal(L.safeUrl(u), null, String(u));
+  // whole records
+  assert.equal(L.cleanRecord('dishes', { id: trap, custom: true, name: 'x' }), null, 'bad id → dropped');
+  const d = L.cleanRecord('dishes', { id: 'u1', custom: true, name: '<b>菜</b>', time: '5"><script>', level: 9, ings: ['蛋', { a: 1 }], photo: trap, builtin: true, extra: 'kept',
+    links: [{ url: 'javascript:alert(1)' }, { url: 'https://a.com/x', title: 7, src: '<x>' }] });
+  assert.equal(d.name, '<b>菜</b>', 'text stays text (escaped when drawn)');
+  assert.equal(d.time, undefined); assert.equal(d.level, 3); assert.deepEqual(d.ings, ['蛋']); assert.equal(d.photo, null);
+  assert.equal(d.builtin, undefined, 'app-only flags are not taken from outside'); assert.equal(d.extra, 'kept', 'unknown fields are kept');
+  assert.deepEqual(d.links, [{ url: 'https://a.com/x', title: '7', src: 'web' }]);
+  const ok = { id: 'tomato-egg', fav: true, updatedAt: 5 };
+  assert.deepEqual(L.cleanRecord('dishes', ok), ok, 'a normal record passes unchanged');
+  const log = { id: 'l1', dishId: 'tomato-egg', date: T, rating: 4, note: '多放盐', photo: 'data:image/jpeg;base64,AAAA', createdAt: 1, by: 'YC' };
+  assert.deepEqual(L.cleanRecord('logs', log), log, 'a normal log passes unchanged');
+  assert.equal(L.cleanRecord('logs', { ...log, date: '"><img>' }), null);
+  assert.equal(L.cleanRecord('logs', { ...log, rating: 99 }).rating, 5, 'stars() would throw on 99');
+  assert.doesNotThrow(() => L.stars(99));
+  assert.deepEqual(L.cleanRecord('plan', { id: T, dishes: ['a', trap, 'b'] }).dishes, ['a', 'b']);
+  assert.equal(L.cleanRecord('plan', { id: 'nope', dishes: [] }), null);
+  assert.equal(L.cleanRecord('shop', { id: 's1' }), null, 'shopping item needs a name');
+  assert.equal(L.cleanRecord('kv', { id: 'settings' }), null);
+  // settings / weather
+  const st = L.cleanKv({ id: 'settings', value: { avoidDays: '7"', city: trap, name: '<img src=x onerror=1>', filter: { maxTime: 'x', taste: 'light' }, extraNo: ['a', trap], hideInstall: 1 } });
+  assert.equal(st.value.avoidDays, 0); assert.equal(st.value.city, ''); assert.equal(st.value.name.length, 8);
+  assert.deepEqual(st.value.filter, { maxTime: 0, taste: 'light' }); assert.deepEqual(st.value.extraNo, ['a']); assert.equal(st.value.hideInstall, true);
+  assert.deepEqual(L.cleanKv({ id: 'weather', value: { city: 'syd', at: 9, days: { [T]: 14.6, '2026-11-26': '<b>' } } }).value, { city: 'syd', at: 9, days: { [T]: 15 } });
+  assert.equal(L.cleanKv({ id: '_sync', value: { code: 'X' } }), null, 'a backup can\'t plant a sync code');
+});
+
 console.log(`\nAll ${n} logic tests passed.`);

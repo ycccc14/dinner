@@ -431,7 +431,98 @@ export function parseShared(text) {
   return { url, title: title.slice(0, 60), src };
 }
 
-export function stars(n) { n = Math.round(n || 0); return '★'.repeat(n) + '☆'.repeat(5 - n); }
+export function stars(n) { n = Math.max(0, Math.min(5, Math.round(Number(n) || 0))); return '★'.repeat(n) + '☆'.repeat(5 - n); }
+
+// ---------- data from outside this phone (the other phone via sync, backup files) ----------
+// Everything that comes in is checked before it is stored or drawn: ids are plain words, photos are real image data,
+// links are http(s), numbers are numbers. A bad record is dropped instead of reaching the page (no script injection).
+// Fields this version doesn't know are kept (a newer version on the other phone may use them); they are never drawn.
+const ID_RE = /^[A-Za-z0-9_.:-]{1,64}$/;
+const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
+export const safeId = (v) => (typeof v === 'number' && Number.isFinite(v)) || (typeof v === 'string' && ID_RE.test(v));
+export const safePhoto = (v) => (typeof v === 'string' && v.length < 6e6 && /^data:image\/(jpeg|png|webp);base64,[A-Za-z0-9+/]+=*$/.test(v) ? v : null);
+export function safeUrl(v) {
+  if (typeof v !== 'string' || v.length > 2000 || !/^https?:\/\//i.test(v) || /[\s"'<>`\\]/.test(v)) return null;
+  try { return /^https?:$/.test(new URL(v).protocol) ? v : null; } catch (e) { return null; }
+}
+const idList = (v) => (Array.isArray(v) ? v.filter(safeId) : []);
+const strList = (v, max) => (Array.isArray(v) ? v.filter((x) => typeof x === 'string' || typeof x === 'number').map((x) => String(x).slice(0, max)) : []);
+const fix = (o, keys, f) => { for (const k of keys) if (o[k] !== undefined && o[k] !== null) o[k] = f(o[k]); };
+const numIn = (lo, hi) => (v) => { const n = Number(v); return Number.isFinite(n) ? Math.max(lo, Math.min(hi, n)) : undefined; };
+const textOf = (max) => (v) => String(v).slice(0, max);
+
+/** A record for a synced store ('dishes' | 'logs' | 'plan' | 'shop') → a safe copy, or null if it can't be used. */
+export function cleanRecord(store, r) {
+  if (!r || typeof r !== 'object' || Array.isArray(r) || !safeId(r.id)) return null;
+  const o = { ...r };
+  fix(o, ['updatedAt', 'createdAt', 'addedAt'], numIn(0, 1e15));
+  if (o.photo !== undefined && o.photo !== null) o.photo = safePhoto(o.photo);
+  if (store === 'dishes') {
+    delete o.builtin; delete o.pending; // set by the app itself, never stored
+    fix(o, ['name', 'emoji', 'cuisine', 'type', 'taste'], textOf(60));
+    fix(o, ['en'], textOf(120));
+    fix(o, ['time'], numIn(1, 600));
+    fix(o, ['level'], (v) => Math.round(numIn(1, 3)(v) || 1));
+    fix(o, ['fav', 'hidden', 'added', 'edited', 'custom'], Boolean);
+    if (o.ings !== undefined) o.ings = strList(o.ings, 40);
+    if (o.links !== undefined) {
+      o.links = (Array.isArray(o.links) ? o.links : []).filter((l) => l && safeUrl(l.url)).map((l) => ({
+        url: l.url, title: l.title == null ? '' : String(l.title).slice(0, 120), src: ['xhs', 'yt', 'xcf', 'web'].includes(l.src) ? l.src : 'web',
+        ...(Number.isFinite(Number(l.addedAt)) ? { addedAt: Number(l.addedAt) } : {}),
+      }));
+    }
+    if (o.custom && typeof o.name !== 'string') return null; // an own dish needs a name
+    return o;
+  }
+  if (store === 'logs') {
+    if (typeof o.date !== 'string' || !DATE_RE.test(o.date) || !safeId(o.dishId)) return null;
+    o.rating = Math.round(numIn(0, 5)(o.rating) || 0);
+    fix(o, ['note'], textOf(2000));
+    fix(o, ['by'], textOf(20));
+    return o;
+  }
+  if (store === 'plan') {
+    if (typeof o.id !== 'string' || !DATE_RE.test(o.id)) return null;
+    o.dishes = idList(o.dishes);
+    return o;
+  }
+  if (store === 'shop') {
+    if (typeof o.name !== 'string' && typeof o.name !== 'number') return null;
+    o.name = String(o.name).slice(0, 60);
+    o.done = !!o.done;
+    if (o.for !== undefined) o.for = strList(o.for, 60);
+    return o;
+  }
+  return null;
+}
+
+/** Settings / weather from a backup file or the phone's own storage → safe copies; other kv ids → null. */
+export function cleanKv(r) {
+  if (!r || typeof r !== 'object' || (r.id !== 'settings' && r.id !== 'weather')) return null;
+  const v = r.value && typeof r.value === 'object' && !Array.isArray(r.value) ? { ...r.value } : {};
+  if (r.id === 'weather') {
+    const days = {};
+    for (const [d, t] of Object.entries(v.days && typeof v.days === 'object' ? v.days : {})) if (DATE_RE.test(d) && typeof t === 'number' && Number.isFinite(t)) days[d] = Math.round(t);
+    return { id: 'weather', value: { city: typeof v.city === 'string' && CITIES[v.city] ? v.city : '', at: Number(v.at) || 0, days } };
+  }
+  fix(v, ['avoidDays'], (x) => Math.round(numIn(0, 60)(x) || 0));
+  fix(v, ['perDay'], (x) => (Number(x) === 1 ? 1 : 2));
+  fix(v, ['name'], textOf(8));
+  fix(v, ['autoPlanned'], (x) => (typeof x === 'string' && DATE_RE.test(x) ? x : ''));
+  fix(v, ['withPantry', 'hideInstall', 'learn', 'autoPlan'], Boolean);
+  if (v.city !== undefined) v.city = typeof v.city === 'string' && CITIES[v.city] ? v.city : '';
+  if (v.extraNo !== undefined) v.extraNo = idList(v.extraNo);
+  if (v.newWeek !== undefined) v.newWeek = v.newWeek && typeof v.newWeek === 'object' && typeof v.newWeek.week === 'string' ? { week: v.newWeek.week, ids: idList(v.newWeek.ids) } : null;
+  if (v.filter !== undefined) {
+    const f = v.filter && typeof v.filter === 'object' ? { ...v.filter } : {};
+    fix(f, ['cuisine', 'type', 'taste', 'seafood'], textOf(20));
+    fix(f, ['maxTime'], (x) => numIn(0, 600)(x) || 0);
+    fix(f, ['level'], (x) => numIn(0, 3)(x) || 0);
+    fix(f, ['favOnly', 'noGarlic', 'easyShop'], Boolean);
+    v.filter = f;
+  }
+  return { id: 'settings', value: v };
+}
 
 /** Small seeded random generator (tests). */
 export function seeded(seed) {

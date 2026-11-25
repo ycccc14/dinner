@@ -3,6 +3,7 @@
 // Each change carries its time; when both phones changed the same thing, the later change wins.
 // Photos are uploaded once (by content hash) and fetched by the other phone when it first sees them.
 import * as DB from './db.js';
+import { cleanRecord, safeId, safePhoto } from './logic.js';
 
 export const SYNC_URL = 'https://script.google.com/macros/s/AKfycbxPsKQwN_PYYhSI4smXEy9uk1tEl0i0kXmUiHOhpT9yNX7KLPWH_UYGiDgBvXJPHBhUfg/exec';
 const url = () => (typeof window !== 'undefined' && window.__DINNER_SYNC_URL) || SYNC_URL; // tests use a local stand-in
@@ -26,7 +27,7 @@ async function call(body) {
   if (!r.ok) throw new Error(`同步服务器没有回应（${r.status}）`);
   let j;
   try { j = await r.json(); } catch (e) { throw new Error('同步服务器还没准备好'); }
-  if (!j.ok) throw new Error(j.error || '同步失败');
+  if (!j.ok) throw Object.assign(new Error(j.error || '同步失败'), { answered: true }); // the server said no (not a network problem)
   return j;
 }
 const saveCfg = () => DB.putRaw('kv', { id: '_sync', value: cfg });
@@ -150,6 +151,7 @@ async function pull() {
   const mine = await DB.pending();
   let n = 0;
   for (const c of r.changes) {
+    if (!c || !DB.SYNCED.includes(c.store) || !safeId(c.id)) continue; // not something this app stores
     const key = `${c.store}|${c.id}`;
     if (mine[key] && mine[key].at > c.at) continue; // changed here more recently: ours goes up next
     const local = await DB.get(c.store, c.id);
@@ -158,17 +160,24 @@ async function pull() {
       continue;
     }
     if (local && local.updatedAt === c.at) continue; // already have it (often our own change coming back)
-    const rec = { ...c.rec, updatedAt: c.at };
+    const rec = { ...(c.rec && typeof c.rec === 'object' ? c.rec : {}), id: c.id, updatedAt: c.at };
     if (typeof rec.photo === 'string' && rec.photo.startsWith('ph:')) {
       const h = rec.photo.slice(3);
       if (local && typeof local.photo === 'string' && local.photo.startsWith('data:') && (await hash(local.photo)) === h) rec.photo = local.photo;
       else {
-        const p = await call({ fn: 'photo-get', code: cfg.code, id: h }); // throws → retried next time, rev not moved on
-        rec.photo = p.data;
-        if (!cfg.photos.includes(h)) cfg.photos.push(h);
+        // A photo the server can't give back must not hold up everything after it: keep the record, skip the picture.
+        let p = null;
+        try { p = await call({ fn: 'photo-get', code: cfg.code, id: h }); } catch (e) {
+          if (!(e.answered && e.message === 'no photo')) throw e; // network / Drive trouble: try the whole pull again later
+          console.warn('photo skipped', h, e.message);
+        }
+        rec.photo = p && safePhoto(p.data) ? p.data : (local && safePhoto(local.photo)) || null;
+        if (p && rec.photo === p.data && !cfg.photos.includes(h)) cfg.photos.push(h);
       }
     }
-    await DB.putRaw(c.store, rec);
+    const safe = cleanRecord(c.store, rec); // the other phone (or whoever has the code) can't inject code into this one
+    if (!safe) { console.warn('change skipped', key); continue; }
+    await DB.putRaw(c.store, safe);
     n++;
   }
   cfg.rev = r.rev;

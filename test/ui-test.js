@@ -65,8 +65,11 @@ try {
   await tap('[data-photo]');
   await until('document.querySelector(".ph img")', 'photo picked');
   await full('03-log-sheet');
-  await tap('[data-save]');
-  await until('window.__dinner.S.logs.length === 1 && !document.querySelector(".sheet-wrap")', 'saved');
+  await js('(() => { const b = document.querySelector("[data-save]"); b.click(); b.click(); })()'); // impatient double tap
+  await until('window.__dinner.S.logs.length >= 1 && !document.querySelector(".sheet-wrap")', 'saved');
+  await sleep(300);
+  assert.equal(await S('S.logs.length'), 1, 'a double tap on 保存 makes one record, not two');
+  assert.equal((await js('window.__dinner.DB.all("logs")')).length, 1, 'one record stored');
   const log = await S('S.logs[0]');
   assert.equal(log.dishId, chosen); assert.equal(log.rating, 4); assert.equal(log.date, T); assert.equal(log.note, '下次多放盐，少放油');
   assert.ok(log.photo.startsWith('data:image/jpeg'));
@@ -450,6 +453,53 @@ try {
   await tap('[data-ok]');
   await until('window.__dinner.S.logs.length === 1 && window.__dinner.S.dishes.some((d) => d.name === "妈妈的咖喱鸡")', 'restored');
   ok('settings saved; backup → wipe → import brings everything back');
+
+  // 14b. A booby-trapped backup file (or synced data) can't run code in the app
+  const trap = 'window.__pwned = 1';
+  const evil = {
+    app: 'dinner', version: 1,
+    dishes: [
+      { id: `bad" onmouseover="${trap}`, custom: true, name: '坏 id 的菜' },
+      { id: 'evil1', custom: true, name: `<img src=x onerror="${trap}">毒菜`, emoji: '<b>', time: `1"><img src=x onerror=${trap}>`, level: 1, taste: 'light',
+        photo: `x" onerror="${trap}`, ings: ['鸡蛋'],
+        links: [{ url: `javascript:${trap}`, title: '坏链接' }, { url: 'https://example.com/ok', title: '好链接', src: 'web' }] },
+    ],
+    logs: [
+      { id: 'evil-log', dishId: 'evil1', date: T, rating: 9, note: '<b>笔记</b>', photo: `javascript:${trap}`, by: `<img src=x onerror="${trap}">` },
+      { id: 'bad-date', dishId: 'evil1', date: `"><img src=x onerror=${trap}>` },
+    ],
+    plan: [{ id: T, dishes: ['evil1', `x"><img src=x onerror=${trap}>`] }],
+    shop: [{ id: 'evil-shop', name: `<img src=x onerror="${trap}">`, for: ['毒菜'] }],
+    kv: [{ id: 'weather', value: { city: 'syd', at: 1, days: { [T]: `<img src=x onerror=${trap}>` } } }, { id: '_sync', value: { code: 'STEALME' } }],
+  };
+  const evilFile = path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'dinner-evil-')), 'backup.json');
+  fs.writeFileSync(evilFile, JSON.stringify(evil));
+  ph.nextFiles([evilFile]);
+  await tap('[data-act=import]');
+  await until('document.querySelector("[data-ok]")', 'import confirm');
+  await tap('[data-ok]');
+  await until('window.__dinner.S.dishes.some((d) => d.id === "evil1")', 'trap imported');
+  for (const h of ['#home', '#dish/evil1', '#log', '#plan', '#dishes']) {
+    await go(h);
+    await sleep(150);
+    await js('document.querySelectorAll("[onmouseover],[onerror]").forEach((el) => el.dispatchEvent(new Event("mouseover")))');
+    assert.equal(await js('document.querySelectorAll("[onerror],[onmouseover],a[href^=javascript]").length'), 0, `no injected handlers on ${h}`);
+  }
+  await sleep(300);
+  assert.equal(await js('window.__pwned'), undefined, 'no injected code ran');
+  const ev = await S('S.dishes.find((d) => d.id === "evil1")');
+  assert.equal(ev.time, 30, 'junk time → default');
+  assert.ok(!ev.photo, 'fake photo dropped');
+  assert.deepEqual(ev.links.map((l) => l.url), ['https://example.com/ok'], 'javascript: link dropped');
+  assert.ok(!(await S('S.dishes.some((d) => d.name === "坏 id 的菜")')), 'record with a bad id dropped');
+  const el = await S('S.logs.find((l) => l.id === "evil-log")');
+  assert.equal(el.rating, 5); assert.equal(el.photo, null);
+  assert.ok(!(await S('S.logs.some((l) => l.id === "bad-date")')));
+  assert.deepEqual(await S(`S.plan[${JSON.stringify(T)}].filter((id) => id !== "evil1" && id.includes("<"))`), []);
+  assert.equal(await js('window.__dinner.DB.get("kv", "_sync").then((r) => r ? r.value.code : null)'), null, 'a backup can\'t plant a sync code');
+  await go('#dish/evil1');
+  assert.ok((await text()).includes('<img src=x'), 'the bad name shows as plain text');
+  ok('booby-trapped backup: bad ids / photos / javascript: links dropped, text shown as text, no code runs');
 
   // 15. Dark mode look + no errors
   await ph.send('Emulation.setEmulatedMedia', { features: [{ name: 'prefers-color-scheme', value: 'dark' }] });

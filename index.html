@@ -2,6 +2,9 @@
 <html lang="zh-CN">
 <head>
   <meta charset="utf-8">
+  <!-- Only this site's own scripts may run (no inline scripts / onerror=… tricks). Network: the sync server
+       (Apps Script answers through a googleusercontent.com redirect) and the weather. Photos are data:/blob: images. -->
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; connect-src 'self' https://script.google.com https://*.googleusercontent.com https://api.open-meteo.com; object-src 'none'; base-uri 'none'; form-action 'self'">
   <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
   <title>今晚吃啥</title>
   <meta name="description" content="帮你随机挑晚餐、一键去小红书看做法、记录做过的菜和下次要改进的笔记">

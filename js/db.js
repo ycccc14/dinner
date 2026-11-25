@@ -4,6 +4,8 @@
 // Two-phone sync (js/sync.js): every local change to a SYNCED store is noted in the outbox (kv '_outbox':
 // { 'store|id': { at, del? } }) and records get updatedAt; sync.js sends the outbox and writes the other phone's
 // changes back with putRaw / delRaw, which don't go into the outbox. kv ids starting with '_' are this phone only.
+import { cleanRecord, cleanKv } from './logic.js';
+
 const NAME = 'dinner';
 export const STORES = ['dishes', 'logs', 'plan', 'shop', 'kv'];
 export const SYNCED = ['dishes', 'logs', 'plan', 'shop'];
@@ -116,19 +118,30 @@ export async function dump() {
   return out;
 }
 
+/** Only the records of a backup file that pass the checks in logic.js (a file from someone else can't inject code). */
+export function cleanBackup(data) {
+  const out = {};
+  for (const s of STORES) {
+    const rows = Array.isArray(data[s]) ? data[s] : [];
+    out[s] = rows.map((v) => (s === 'kv' ? cleanKv(v) : cleanRecord(s, v))).filter(Boolean);
+  }
+  return out;
+}
+
 // mode 'replace' wipes first; 'merge' keeps existing records and overwrites same ids.
 export async function restore(data, mode) {
   if (!data || data.app !== 'dinner') throw new Error('这不是「今晚吃啥」的备份文件');
+  const clean = cleanBackup(data);
   const db = await open();
   const tx = db.transaction(STORES, 'readwrite');
   for (const s of STORES) {
     const st = tx.objectStore(s);
     if (mode === 'replace') st.clear();
-    for (const v of data[s] || []) if (s !== 'kv' || !String(v.id).startsWith('_')) st.put(v);
+    for (const v of clean[s]) st.put(v);
   }
   await finish(tx);
   // restored records count as changes from this phone, so the other phone gets them
-  for (const s of SYNCED) { const rows = data[s] || []; if (rows.length) await note(s, rows.map((r) => [r.id, { at: r.updatedAt || Date.now() }])); }
+  for (const s of SYNCED) { const rows = clean[s]; if (rows.length) await note(s, rows.map((r) => [r.id, { at: r.updatedAt || Date.now() }])); }
 }
 
 export async function wipe() {
